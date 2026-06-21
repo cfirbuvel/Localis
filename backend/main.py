@@ -535,8 +535,15 @@ def mute_user(
 
 @app.post("/webhooks/telegram")
 async def telegram_webhook(payload: dict, db: Session = Depends(get_db)):
+    import traceback
+    print(f"--- TELEGRAM WEBHOOK RECEIVED ---")
+    print(payload)
     from backend.services.bot_telegram import handle_telegram_update
-    await handle_telegram_update(payload, db)
+    try:
+        await handle_telegram_update(payload, db)
+    except Exception as e:
+        print(f"!!! ERROR IN TELEGRAM WEBHOOK !!!")
+        traceback.print_exc()
     return {"status": "ok"}
 
 @app.get("/webhooks/whatsapp")
