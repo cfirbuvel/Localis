@@ -1,0 +1,31 @@
+# Executables
+*.exe
+ngrok.exe
+cloudflared.exe
+
+# Python virtual environment and cache
+venv/
+__pycache__/
+*.pyc
+backend/__pycache__/
+backend/.env
+
+# Node / Frontend build
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+
+# Database
+*.db
+neighborhoods.db
+
+# OS / Editors
+.DS_Store
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
