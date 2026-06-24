@@ -9,7 +9,8 @@ from sqlalchemy import (
     ForeignKey,
     Text,
     JSON,
-    ForeignKeyConstraint
+    ForeignKeyConstraint,
+    Float
 )
 from sqlalchemy.orm import relationship
 from backend.database import Base
@@ -30,11 +31,24 @@ class User(Base):
     password_hash = Column(String(255), nullable=True)  # Used for manager login to the dashboard
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    # Metrics and Tracking fields
+    first_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    language_code = Column(String(10), nullable=True)
+    is_bot = Column(Boolean, default=False)
+    last_active_at = Column(DateTime, default=datetime.utcnow)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    start_payload = Column(String(255), nullable=True)
+    last_interaction_text = Column(Text, nullable=True)
+
     # Relationships
     role_assignments = relationship("RoleAssignment", back_populates="user", cascade="all, delete-orphan")
     verifications = relationship("Verification", foreign_keys="Verification.user_id", back_populates="user")
     reviewed_verifications = relationship("Verification", foreign_keys="Verification.reviewed_by", back_populates="reviewer")
     emergencies = relationship("Emergency", back_populates="user")
+    community_requests = relationship("CommunityRequest", back_populates="user", cascade="all, delete-orphan")
+
 
 class LocationNode(Base):
     __tablename__ = "locations"
@@ -43,9 +57,14 @@ class LocationNode(Base):
     name = Column(String(150), nullable=False)
     level = Column(String(20), nullable=False)  # 'COUNTRY', 'CITY', 'NEIGHBORHOOD', 'STREET', 'BUILDING'
     parent_id = Column(Integer, ForeignKey("locations.id", ondelete="CASCADE"), nullable=True)
-
+    created_by_id = Column(String(36), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+    radius = Column(Float, nullable=True)
+ 
     # Relationships
     parent = relationship("LocationNode", remote_side=[id], backref="children")
+    created_by = relationship("User")
     groups = relationship("GroupChat", back_populates="location", cascade="all, delete-orphan")
     role_assignments = relationship("RoleAssignment", back_populates="location", cascade="all, delete-orphan")
     verifications = relationship("Verification", back_populates="building", cascade="all, delete-orphan")
@@ -122,3 +141,22 @@ class ModerationLog(Base):
     # Relationships
     location = relationship("LocationNode")
     user = relationship("User")
+
+class CommunityRequest(Base):
+    __tablename__ = "community_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    parent_id = Column(Integer, ForeignKey("locations.id", ondelete="CASCADE"), nullable=True)
+    parent_request_id = Column(Integer, ForeignKey("community_requests.id", ondelete="CASCADE"), nullable=True)
+    name = Column(String(150), nullable=False)
+    level = Column(String(20), nullable=False)  # 'COUNTRY', 'CITY', 'NEIGHBORHOOD', 'STREET', 'BUILDING'
+    status = Column(String(20), default="PENDING")  # 'PENDING', 'APPROVED', 'REJECTED'
+    created_at = Column(DateTime, default=datetime.utcnow)
+    proof_url = Column(String(255), nullable=True)
+
+    # Relationships
+    user = relationship("User", back_populates="community_requests")
+    parent = relationship("LocationNode")
+    parent_request = relationship("CommunityRequest", remote_side=[id])
+

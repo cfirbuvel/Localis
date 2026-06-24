@@ -29,3 +29,11 @@ neighborhoods.db
 *.njsproj
 *.sln
 *.sw?
+
+# Temporary test pages and logs
+*_test.html
+ddg_lite.html
+cloudflared.log
+backend/services/user_states.json
+scratch/
+

@@ -44,10 +44,40 @@ class UserSearchResponse(BaseModel):
     whatsapp_number: Optional[str] = None
     is_banned: bool
     is_muted: bool
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    language_code: Optional[str] = None
+    is_bot: bool
+    last_active_at: datetime
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    start_payload: Optional[str] = None
+    last_interaction_text: Optional[str] = None
     roles: List[RoleAssignmentResponse] = []
 
     class Config:
         from_attributes = True
+
+# Community Request Schemas
+class CommunityRequestResponse(BaseModel):
+    id: int
+    user: UserMini
+    parent_id: Optional[int] = None
+    parent_name: Optional[str] = None
+    name: str
+    level: str
+    status: str
+    proof_url: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CommunityRequestReview(BaseModel):
+    status: str  # 'APPROVED', 'REJECTED'
+    custom_group_chat_id: Optional[str] = None
+    custom_group_invite_link: Optional[str] = None
+
 
 # Role Assignment Request
 class RoleAssignRequest(BaseModel):
@@ -76,6 +106,7 @@ class LocationResponse(BaseModel):
     name: str
     level: str
     parent_id: Optional[int] = None
+    created_by: Optional[UserMini] = None
     groups: List[GroupChatResponse] = []
 
     class Config:

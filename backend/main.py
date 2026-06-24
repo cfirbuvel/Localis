@@ -1,4 +1,5 @@
 import os
+import sys
 from datetime import datetime
 from typing import List, Optional
 from fastapi import FastAPI, Depends, HTTPException, status, Query
@@ -13,7 +14,8 @@ from backend.services.location import (
     get_location_ancestors,
     get_location_descendants,
     is_descendant_of,
-    auto_create_node_path
+    auto_create_node_path,
+    normalize_location_name
 )
 
 app = FastAPI(title="Global Neighborhood Platform API")
@@ -26,6 +28,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Global Neighborhood Platform API is running successfully.",
+        "documentation": "/docs"
+    }
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/login")
 
@@ -186,9 +196,19 @@ def search_users(
             "whatsapp_number": u.whatsapp_number,
             "is_banned": u.is_banned,
             "is_muted": u.is_muted,
+            "first_name": u.first_name,
+            "last_name": u.last_name,
+            "language_code": u.language_code,
+            "is_bot": u.is_bot or False,
+            "last_active_at": u.last_active_at,
+            "latitude": u.latitude,
+            "longitude": u.longitude,
+            "start_payload": u.start_payload,
+            "last_interaction_text": u.last_interaction_text,
             "roles": roles_mapped
         })
     return results
+
 
 # ==========================================
 # LOCATION HIERARCHY ENDPOINTS
@@ -229,7 +249,22 @@ def create_location(
                 detail="Only Super Admins can create root Country nodes."
             )
 
-    new_node = models.LocationNode(name=loc.name, level=loc.level, parent_id=loc.parent_id)
+    # Normalize location name
+    normalized_name = normalize_location_name(loc.name, loc.level)
+    
+    # Check if duplicate node already exists under the parent (case-insensitive)
+    existing_node = db.query(models.LocationNode).filter(
+        models.LocationNode.name.ilike(normalized_name),
+        models.LocationNode.level == loc.level,
+        models.LocationNode.parent_id == loc.parent_id
+    ).first()
+    if existing_node:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A location with this name already exists under the parent node."
+        )
+
+    new_node = models.LocationNode(name=normalized_name, level=loc.level, parent_id=loc.parent_id, created_by_id=current_user.id)
     db.add(new_node)
     db.commit()
     db.refresh(new_node)
@@ -530,20 +565,170 @@ def mute_user(
     return {"success": True, "message": f"User successfully {action}."}
 
 # ==========================================
+# COMMUNITY REQUESTS ENDPOINTS
+# ==========================================
+
+@app.get("/api/community-requests/pending", response_model=List[schemas.CommunityRequestResponse])
+def get_pending_community_requests(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    roles = db.query(models.RoleAssignment).filter(models.RoleAssignment.user_id == current_user.id).all()
+    is_super = any(r.role == "SUPER_ADMIN" for r in roles)
+    is_manager = any(r.role == "MANAGER" for r in roles)
+    if not is_super and not is_manager:
+        raise HTTPException(status_code=403, detail="Not authorized to view pending community requests.")
+
+    requests = db.query(models.CommunityRequest).filter(models.CommunityRequest.status == "PENDING").all()
+    results = []
+    for r in requests:
+        results.append({
+            "id": r.id,
+            "user": r.user,
+            "parent_id": r.parent_id,
+            "parent_name": r.parent.name if r.parent else "Global",
+            "name": r.name,
+            "level": r.level,
+            "status": r.status,
+            "proof_url": r.proof_url,
+            "created_at": r.created_at
+        })
+    return results
+
+@app.get("/api/community-requests/{request_id}/search-existing-groups")
+async def search_existing_groups(
+    request_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    req = db.query(models.CommunityRequest).filter(models.CommunityRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Community request not found.")
+        
+    from backend.services.telegram_userbot import search_public_groups
+    suggestions = await search_public_groups(req.name)
+    return suggestions
+
+@app.post("/api/community-requests/{request_id}/review", response_model=schemas.ActionResponse)
+async def review_community_request(
+    request_id: int,
+    review: schemas.CommunityRequestReview,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    roles = db.query(models.RoleAssignment).filter(models.RoleAssignment.user_id == current_user.id).all()
+    is_super = any(r.role == "SUPER_ADMIN" for r in roles)
+    is_manager = any(r.role == "MANAGER" for r in roles)
+    if not is_super and not is_manager:
+        raise HTTPException(status_code=403, detail="Not authorized to review community requests.")
+
+    req = db.query(models.CommunityRequest).filter(models.CommunityRequest.id == request_id).first()
+    if not req:
+        raise HTTPException(status_code=404, detail="Community request not found.")
+
+    req.status = review.status
+    db.commit()
+
+    if review.status == "APPROVED":
+        # Normalize name
+        normalized_name = normalize_location_name(req.name, req.level)
+        
+        # Check if node already exists under the parent (case-insensitive)
+        existing_node = db.query(models.LocationNode).filter(
+            models.LocationNode.name.ilike(normalized_name),
+            models.LocationNode.level == req.level,
+            models.LocationNode.parent_id == req.parent_id
+        ).first()
+        
+        if existing_node:
+            new_node = existing_node
+        else:
+            # Create Location Node
+            new_node = models.LocationNode(
+                name=normalized_name,
+                level=req.level,
+                parent_id=req.parent_id,
+                created_by_id=req.user_id
+            )
+            db.add(new_node)
+            db.commit()
+            db.refresh(new_node)
+
+        # Update child requests waiting for this parent request
+        child_reqs = db.query(models.CommunityRequest).filter(
+            models.CommunityRequest.parent_request_id == req.id
+        ).all()
+        for child in child_reqs:
+            child.parent_id = new_node.id
+            child.parent_request_id = None
+        db.commit()
+
+        # Create Groups
+        gtype = "PRIVATE" if new_node.level == "BUILDING" else "PUBLIC"
+        
+        if review.custom_group_chat_id and review.custom_group_invite_link:
+            tg_chat_id = review.custom_group_chat_id
+            tg_invite_link = review.custom_group_invite_link
+        else:
+            from backend.services.telegram_userbot import create_telegram_group
+            tg_info = await create_telegram_group(new_node.name, new_node.level, node_id=new_node.id)
+            tg_chat_id = tg_info["chat_id"]
+            tg_invite_link = tg_info["invite_link"]
+            
+        tg_group = models.GroupChat(
+            location_id=new_node.id,
+            platform="TELEGRAM",
+            chat_id=tg_chat_id,
+            type=gtype,
+            invite_link=tg_invite_link
+        )
+        db.add(tg_group)
+
+        # WhatsApp Mock Group
+        wa_chat_id = f"wa_chat_{new_node.name.lower().replace(' ', '_')}"
+        wa_group = models.GroupChat(
+            location_id=new_node.id,
+            platform="WHATSAPP",
+            chat_id=wa_chat_id,
+            type=gtype,
+            invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
+        )
+        db.add(wa_group)
+        db.commit()
+
+        # Send Telegram notification if the user has a telegram_id
+        if req.user.telegram_id:
+            from backend.services.bot_telegram import send_message
+            msg = (
+                f"🎉 *Good news!*\nYour request to create the community *{req.name}* ({req.level.title()}) has been approved!\n\n"
+                f"You can join the new group here:\n"
+                f"👉 [Telegram Chat]({tg_invite_link})\n"
+                f"👉 [WhatsApp Chat](https://chat.whatsapp.com/{wa_chat_id})"
+            )
+            await send_message(req.user.telegram_id, msg)
+
+    return {"success": True, "message": f"Community request has been {review.status}."}
+
+# ==========================================
 # TELEGRAM / WHATSAPP BOT WEBHOOK MOCKS (Stubs)
 # ==========================================
+
 
 @app.post("/webhooks/telegram")
 async def telegram_webhook(payload: dict, db: Session = Depends(get_db)):
     import traceback
     print(f"--- TELEGRAM WEBHOOK RECEIVED ---")
-    print(payload)
+    try:
+        print(str(payload).encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace'))
+    except Exception:
+        print("[Payload print error due to encoding]")
     from backend.services.bot_telegram import handle_telegram_update
     try:
         await handle_telegram_update(payload, db)
     except Exception as e:
         print(f"!!! ERROR IN TELEGRAM WEBHOOK !!!")
         traceback.print_exc()
+
     return {"status": "ok"}
 
 @app.get("/webhooks/whatsapp")
@@ -561,4 +746,48 @@ async def whatsapp_webhook(payload: dict, db: Session = Depends(get_db)):
     from backend.services.bot_whatsapp import handle_whatsapp_webhook
     await handle_whatsapp_webhook(payload, db)
     return {"status": "ok"}
+
+@app.get("/api/telegram-file/{file_id}")
+async def get_telegram_file(file_id: str):
+    actual_file_id = file_id.replace("telegram_file_id:", "")
+    token = config.TELEGRAM_BOT_TOKEN
+    
+    if not token or ":" not in token:
+        svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+            <rect width="100%" height="100%" fill="#0d1117"/>
+            <text x="50%" y="35%" font-family="sans-serif" font-size="16" fill="#58a6ff" text-anchor="middle" font-weight="bold">📄 RESIDENCY PROOF DOCUMENT</text>
+            <text x="50%" y="50%" font-family="sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">Verification ID Preview</text>
+            <text x="50%" y="60%" font-family="monospace" font-size="9" fill="#c9d1d9" text-anchor="middle">{actual_file_id[:40]}...</text>
+            <rect x="50" y="200" width="300" height="2" fill="#30363d"/>
+            <text x="50%" y="235%" font-family="sans-serif" font-size="12" fill="#56d364" text-anchor="middle" font-weight="bold">✓ MOCK RESIDENCY PROOF DATA</text>
+        </svg>"""
+        from fastapi.responses import Response
+        return Response(content=svg_content, media_type="image/svg+xml")
+        
+    url = f"https://api.telegram.org/bot{token}/getFile"
+    import httpx
+    async with httpx.AsyncClient() as client:
+        try:
+            res = await client.post(url, json={"file_id": actual_file_id})
+            if res.status_code == 200:
+                file_path = res.json().get("result", {}).get("file_path")
+                if file_path:
+                    file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+                    file_res = await client.get(file_url)
+                    if file_res.status_code == 200:
+                        from fastapi.responses import Response
+                        return Response(content=file_res.content, media_type=file_res.headers.get("content-type", "image/png"))
+        except Exception:
+            pass
+            
+    svg_content = f"""<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+        <rect width="100%" height="100%" fill="#0d1117"/>
+        <text x="50%" y="35%" font-family="sans-serif" font-size="16" fill="#f85149" text-anchor="middle" font-weight="bold">⚠️ TELEGRAM API OFFLINE</text>
+        <text x="50%" y="50%" font-family="sans-serif" font-size="12" fill="#8b949e" text-anchor="middle">Could not fetch proof image from Telegram</text>
+        <text x="50%" y="60%" font-family="monospace" font-size="9" fill="#c9d1d9" text-anchor="middle">{actual_file_id[:40]}...</text>
+        <rect x="50" y="200" width="300" height="2" fill="#30363d"/>
+        <text x="50%" y="235%" font-family="sans-serif" font-size="12" fill="#58a6ff" text-anchor="middle" font-weight="bold">✓ RAW ENCRYPTED PAYLOAD ATTACHED</text>
+    </svg>"""
+    from fastapi.responses import Response
+    return Response(content=svg_content, media_type="image/svg+xml")
 

@@ -8,6 +8,9 @@ services:
     volumes:
       # Persist SQLite DB on host
       - ./neighborhoods.db:/app/neighborhoods.db
+      # Mount backend code for instant hot-reload
+      - ./backend:/app/backend
+
     env_file:
       - ./backend/.env
     restart: unless-stopped
@@ -18,6 +21,23 @@ services:
       dockerfile: Dockerfile
     ports:
       - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
     depends_on:
       - backend
     restart: unless-stopped
+
+  tunnel:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python -u backend/scripts/start_tunnel.py
+    env_file:
+      - ./backend/.env
+    environment:
+      - TUNNEL_TARGET_URL=http://backend:8000
+    depends_on:
+      - backend
+    restart: unless-stopped
+

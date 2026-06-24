@@ -57,7 +57,30 @@ BotOS/
 
 ---
 
-## 🛠️ Backend Setup
+## 🐳 Quick Start: Running with Docker (Recommended)
+
+To run the entire system (fastapi backend + sqlite database + react frontend + bot webhook updates) using Docker:
+
+### 1. Build and Start Containers
+```powershell
+docker compose up --build -d
+```
+
+### 2. Expose Bot Webhook & Set Telegram URL Automatically
+To run the tunnel and automatically configure the Telegram Bot webhook:
+```powershell
+.\start_tunnel.ps1
+```
+*Note: Make sure your `TELEGRAM_BOT_TOKEN` is configured in `backend/.env` first.*
+
+### 3. Open Panel
+- **Frontend Dashboard**: [http://localhost:5173](http://localhost:5173) (User: `admin` / Password: `adminpass`)
+- **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
+
+---
+
+## 🛠️ Backend Setup (Manual Run)
+
 
 ### 1. Prerequisites
 Ensure you have **Python 3.12+** installed.

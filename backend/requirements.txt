@@ -6,3 +6,5 @@ python-dotenv
 pyjwt
 bcrypt
 httpx
+telethon
+

@@ -4,9 +4,50 @@ from typing import Optional, List
 from sqlalchemy.orm import Session
 from backend import config, models
 
-# In-memory states for WhatsApp users
-# Format: {whatsapp_number: {"node_id": int, "action": str}}
-USER_STATES_WA = {}
+import json
+
+class PersistentDict(dict):
+    def __init__(self, filepath):
+        self.filepath = filepath
+        super().__init__()
+        self.load()
+
+    def load(self):
+        if os.path.exists(self.filepath):
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    super().clear()
+                    self.update(data)
+            except Exception as e:
+                print(f"Error loading persistent states: {e}")
+
+    def save(self):
+        try:
+            with open(self.filepath, "w", encoding="utf-8") as f:
+                json.dump(self, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"Error saving persistent states: {e}")
+
+    def __setitem__(self, key, value):
+        super().__setitem__(str(key), value)
+        self.save()
+
+    def __delitem__(self, key):
+        super().__delitem__(str(key))
+        self.save()
+
+    def get(self, key, default=None):
+        return super().get(str(key), default)
+
+    def pop(self, key, default=None):
+        val = super().pop(str(key), default)
+        self.save()
+        return val
+
+# Persistent states for WhatsApp users to survive container restarts/hot-reloads
+states_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "user_states_wa.json")
+USER_STATES_WA = PersistentDict(states_path)
 
 def get_or_create_user_wa(db: Session, whatsapp_number: str, name: str) -> models.User:
     user = db.query(models.User).filter(models.User.whatsapp_number == whatsapp_number).first()

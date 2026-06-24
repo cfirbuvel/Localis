@@ -5,6 +5,9 @@ import RoleManager from './components/RoleManager';
 import VerificationQueue from './components/VerificationQueue';
 import CrisisFeed from './components/CrisisFeed';
 import ModeratorFeed from './components/ModeratorFeed';
+import CommunityApprovals from './components/CommunityApprovals';
+import UserAnalytics from './components/UserAnalytics';
+
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -107,10 +110,15 @@ export default function App() {
         return <CrisisFeed />;
       case 'moderation':
         return <ModeratorFeed />;
+      case 'approvals':
+        return <CommunityApprovals />;
+      case 'users':
+        return <UserAnalytics />;
       default:
         return <HierarchyManager />;
     }
   };
+
 
   return (
     <div className="app-container">
@@ -168,7 +176,24 @@ export default function App() {
           >
             <span>🤖</span> AI Moderation
           </div>
+
+          {(role === 'SUPER_ADMIN' || role === 'MANAGER') && (
+            <div 
+              className={`nav-item ${activeTab === 'approvals' ? 'active' : ''}`}
+              onClick={() => setActiveTab('approvals')}
+            >
+              <span>✅</span> Approvals Queue
+            </div>
+          )}
+
+          <div 
+            className={`nav-item ${activeTab === 'users' ? 'active' : ''}`}
+            onClick={() => setActiveTab('users')}
+          >
+            <span>📊</span> Users Directory
+          </div>
         </nav>
+
 
         <div className="user-profile">
           <div className="avatar">

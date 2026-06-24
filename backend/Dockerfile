@@ -2,8 +2,12 @@ FROM python:3.12-slim
 
 # Install system dependencies if required
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
+    build-essential wget \
     && rm -rf /var/lib/apt/lists/*
+
+# Download and install cloudflared
+RUN wget -q https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -O /usr/local/bin/cloudflared \
+    && chmod +x /usr/local/bin/cloudflared
 
 WORKDIR /app
 

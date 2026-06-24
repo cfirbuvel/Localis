@@ -223,15 +223,44 @@ export default function HierarchyManager() {
                   }}
                   onClick={() => loc.level !== 'BUILDING' && navigateToNode(loc)}
                 >
-                  <div>
-                    <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>{loc.name}</span>
-                    <span className="badge" style={{ 
-                      marginLeft: '12px', 
-                      background: 'rgba(255,255,255,0.05)',
-                      color: 'var(--text-secondary)'
-                    }}>
-                      {loc.level}
-                    </span>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 600 }}>{loc.name}</span>
+                      <span className="badge" style={{ 
+                        background: 'rgba(255,255,255,0.05)',
+                        color: 'var(--text-secondary)'
+                      }}>
+                        {loc.level}
+                      </span>
+                      {loc.created_by && (
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                          • Requested by: @{loc.created_by.username}
+                        </span>
+                      )}
+                    </div>
+                    {loc.groups && loc.groups.length > 0 && (
+                      <div style={{ display: 'flex', gap: '16px', fontSize: '0.8rem', marginTop: '4px' }}>
+                        {loc.groups.map(g => (
+                          <a 
+                            key={g.id} 
+                            href={g.invite_link} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            style={{ 
+                              color: g.platform === 'TELEGRAM' ? '#24A1DE' : '#25D366', 
+                              textDecoration: 'none',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              fontWeight: 600
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {g.platform === 'TELEGRAM' ? '💬 Telegram' : '🟢 WhatsApp'}
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </div>
                   {loc.level !== 'BUILDING' && (
                     <span style={{ color: 'var(--accent-purple)', fontSize: '0.9rem', fontWeight: 600 }}>Browse ➔</span>
@@ -258,20 +287,34 @@ export default function HierarchyManager() {
                 <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', display: 'block' }}>LOCATION NAME</span>
                 <strong style={{ fontSize: '1.2rem' }}>{currentPath[currentPath.length - 1].name}</strong>
               </div>
+              {currentPath[currentPath.length - 1].created_by && (
+                <div style={{ marginBottom: '20px' }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', display: 'block' }}>REQUESTED BY</span>
+                  <strong>@{currentPath[currentPath.length - 1].created_by.username}</strong>
+                </div>
+              )}
 
               <div style={{ marginTop: '24px' }}>
                 <h4 style={{ fontSize: '0.9rem', marginBottom: '12px', color: 'var(--text-secondary)' }}>PLATFORM GROUPS</h4>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>💬</span>
-                    <span>Telegram Group:</span>
-                    <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Auto-Generated</span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
-                    <span style={{ fontSize: '1.1rem' }}>🟢</span>
-                    <span>WhatsApp Group:</span>
-                    <span style={{ color: 'var(--accent-blue)', fontWeight: 600 }}>Auto-Generated</span>
-                  </div>
+                  {currentPath[currentPath.length - 1].groups && currentPath[currentPath.length - 1].groups.length > 0 ? (
+                    currentPath[currentPath.length - 1].groups.map(g => (
+                      <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.85rem' }}>
+                        <span style={{ fontSize: '1.1rem' }}>{g.platform === 'TELEGRAM' ? '💬' : '🟢'}</span>
+                        <span>{g.platform.title()} Group:</span>
+                        <a 
+                          href={g.invite_link} 
+                          target="_blank" 
+                          rel="noopener noreferrer" 
+                          style={{ color: 'var(--accent-blue)', fontWeight: 600, textDecoration: 'none' }}
+                        >
+                          Join Link
+                        </a>
+                      </div>
+                    ))
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No groups configured.</span>
+                  )}
                 </div>
               </div>
             </div>
