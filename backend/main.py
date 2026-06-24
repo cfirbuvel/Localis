@@ -20,6 +20,12 @@ from backend.services.location import (
 
 app = FastAPI(title="Global Neighborhood Platform API")
 
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    from backend.scripts.retention_worker import start_retention_worker
+    asyncio.create_task(start_retention_worker())
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -65,6 +71,15 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account has been banned.",
         )
+        
+    # Check if the user has any admin panel access roles
+    roles = db.query(models.RoleAssignment).filter(models.RoleAssignment.user_id == user.id).all()
+    if not roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not have permissions to access the admin panel.",
+        )
+        
     return user
 
 # Helper function to get maximum role of current user
@@ -708,6 +723,88 @@ async def review_community_request(
             await send_message(req.user.telegram_id, msg)
 
     return {"success": True, "message": f"Community request has been {review.status}."}
+
+# ==========================================
+# CHAT LOG RETRIEVAL ENDPOINTS
+# ==========================================
+
+@app.get("/api/chats/locations/{location_id}")
+def get_location_chats(
+    location_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    groups = db.query(models.GroupChat).filter(models.GroupChat.location_id == location_id).all()
+    if not groups:
+        return []
+    
+    chat_ids = [g.chat_id for g in groups]
+    
+    from backend.database_chats import SessionLocalChats, ChatMessage
+    chats_db = SessionLocalChats()
+    try:
+        messages = chats_db.query(ChatMessage).filter(
+            ChatMessage.chat_id.in_(chat_ids)
+        ).order_by(ChatMessage.timestamp.desc()).limit(100).all()
+        
+        results = []
+        for m in messages:
+            results.append({
+                "id": m.id,
+                "platform": m.platform,
+                "chat_id": m.chat_id,
+                "user_id": m.user_id,
+                "username": m.username,
+                "message_text": m.message_text,
+                "timestamp": m.timestamp
+            })
+        return results
+    finally:
+        chats_db.close()
+
+@app.get("/api/chats/users/{user_id}")
+def get_user_chat_history(
+    user_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    target_user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    
+    user_identifiers = []
+    if target_user.telegram_id:
+        user_identifiers.append(target_user.telegram_id)
+    if target_user.whatsapp_number:
+        user_identifiers.append(target_user.whatsapp_number)
+        
+    if not user_identifiers:
+        return []
+        
+    from backend.database_chats import SessionLocalChats, ChatMessage
+    chats_db = SessionLocalChats()
+    try:
+        messages = chats_db.query(ChatMessage).filter(
+            ChatMessage.user_id.in_(user_identifiers)
+        ).order_by(ChatMessage.timestamp.desc()).limit(100).all()
+        
+        results = []
+        for m in messages:
+            group = db.query(models.GroupChat).filter(models.GroupChat.chat_id == m.chat_id).first()
+            loc_name = group.location.name if group and group.location else "Unknown Group"
+            results.append({
+                "id": m.id,
+                "platform": m.platform,
+                "chat_id": m.chat_id,
+                "location_name": loc_name,
+                "user_id": m.user_id,
+                "username": m.username,
+                "message_text": m.message_text,
+                "timestamp": m.timestamp
+            })
+        return results
+    finally:
+        chats_db.close()
 
 # ==========================================
 # TELEGRAM / WHATSAPP BOT WEBHOOK MOCKS (Stubs)

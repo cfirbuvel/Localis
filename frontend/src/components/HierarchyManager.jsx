@@ -12,6 +12,40 @@ export default function HierarchyManager() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState('');
 
+  // Live Chat History
+  const [chatMessages, setChatMessages] = useState([]);
+  const [showChatHistory, setShowChatHistory] = useState(false);
+  const [loadingChats, setLoadingChats] = useState(false);
+
+  const activeNode = currentPath[currentPath.length - 1];
+
+  const fetchChatMessages = async (nodeId) => {
+    if (!nodeId) return;
+    setLoadingChats(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:8000/api/chats/locations/${nodeId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setChatMessages(data);
+      }
+    } catch (err) {
+      console.error("Error loading chat messages:", err);
+    } finally {
+      setLoadingChats(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeNode && showChatHistory) {
+      fetchChatMessages(activeNode.id);
+    } else {
+      setChatMessages([]);
+    }
+  }, [activeNode, showChatHistory]);
+
   const fetchLocations = async () => {
     setLoading(true);
     try {
@@ -316,6 +350,43 @@ export default function HierarchyManager() {
                     <span style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>No groups configured.</span>
                   )}
                 </div>
+              </div>
+
+              <div style={{ marginTop: '28px', borderTop: '1px solid var(--glass-border)', paddingTop: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  <h4 style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', margin: 0 }}>💬 LIVE CHAT HISTORY</h4>
+                  <button 
+                    onClick={() => setShowChatHistory(!showChatHistory)}
+                    className="btn"
+                    style={{ padding: '4px 8px', fontSize: '0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                  >
+                    {showChatHistory ? 'Hide' : 'Show'}
+                  </button>
+                </div>
+
+                {showChatHistory && (
+                  <div style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '8px', padding: '12px', maxHeight: '250px', overflowY: 'auto', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    {loadingChats ? (
+                      <div style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', textAlign: 'center', padding: '10px 0' }}>Loading logs...</div>
+                    ) : chatMessages.length === 0 ? (
+                      <div style={{ color: 'var(--text-muted)', fontSize: '0.8rem', textAlign: 'center', padding: '10px 0' }}>No recent messages.</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        {chatMessages.map(msg => (
+                          <div key={msg.id} style={{ fontSize: '0.8rem', borderBottom: '1px solid rgba(255,255,255,0.03)', paddingBottom: '6px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', color: 'var(--text-secondary)', fontSize: '0.7rem', marginBottom: '2px' }}>
+                              <span style={{ fontWeight: 600, color: msg.platform === 'TELEGRAM' ? '#24A1DE' : '#25D366' }}>
+                                {msg.platform === 'TELEGRAM' ? '💬' : '🟢'} @{msg.username || 'unknown'}
+                              </span>
+                              <span>{new Date(msg.timestamp).toLocaleTimeString()}</span>
+                            </div>
+                            <div style={{ color: 'white', wordBreak: 'break-word' }}>{msg.message_text}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ) : (

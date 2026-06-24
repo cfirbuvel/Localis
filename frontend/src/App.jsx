@@ -42,18 +42,30 @@ export default function App() {
       const locRes = await fetch('http://localhost:8000/api/locations', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (locRes.status === 401 || locRes.status === 403) {
+        handleLogout();
+        return;
+      }
       const locations = locRes.ok ? await locRes.json() : [];
 
       // Fetch Pending Verifications
       const verRes = await fetch('http://localhost:8000/api/verifications/pending', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (verRes.status === 401 || verRes.status === 403) {
+        handleLogout();
+        return;
+      }
       const verifs = verRes.ok ? await verRes.json() : [];
 
       // Fetch Emergencies
       const emRes = await fetch('http://localhost:8000/api/emergencies', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (emRes.status === 401 || emRes.status === 403) {
+        handleLogout();
+        return;
+      }
       const emergencies = emRes.ok ? await emRes.json() : [];
       const activeEmCount = emergencies.filter(e => e.status === 'ACTIVE').length;
 
@@ -61,6 +73,10 @@ export default function App() {
       const modRes = await fetch('http://localhost:8000/api/moderation/logs', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (modRes.status === 401 || modRes.status === 403) {
+        handleLogout();
+        return;
+      }
       const logs = modRes.ok ? await modRes.json() : [];
 
       setStats({
@@ -232,7 +248,7 @@ export default function App() {
 
         {/* Global Statistics Cards */}
         <section className="grid-stats">
-          <div className="glass-panel stat-card">
+          <div className="glass-panel stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('hierarchy')}>
             <div className="stat-icon icon-purple">📍</div>
             <div>
               <div className="stat-value">{stats.locationsCount}</div>
@@ -240,7 +256,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="glass-panel stat-card">
+          <div className="glass-panel stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('verifications')}>
             <div className="stat-icon icon-emerald">🔑</div>
             <div>
               <div className="stat-value">{stats.pendingVerifications}</div>
@@ -248,7 +264,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="glass-panel stat-card">
+          <div className="glass-panel stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('crisis')}>
             <div className="stat-icon icon-red">🚨</div>
             <div>
               <div className="stat-value" style={{ color: stats.activeEmergencies > 0 ? 'var(--danger)' : 'inherit' }}>
@@ -258,7 +274,7 @@ export default function App() {
             </div>
           </div>
 
-          <div className="glass-panel stat-card">
+          <div className="glass-panel stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('moderation')}>
             <div className="stat-icon icon-blue">🤖</div>
             <div>
               <div className="stat-value">{stats.flaggedLogs}</div>

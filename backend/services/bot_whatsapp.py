@@ -157,6 +157,27 @@ async def handle_whatsapp_webhook(payload: dict, db: Session):
                 elif msg_type == "document":
                     media_id = msg.get("document", {}).get("id")
 
+                # Log the WhatsApp message to chats.db if it's text and not a command callback
+                is_callback = any(text_body.startswith(prefix) for prefix in ["node_", "verify_", "add_", "browse_", "/"]) or text_body.lower() == "start"
+                if text_body and not is_callback:
+                    from backend.database_chats import SessionLocalChats, ChatMessage
+                    chats_db = SessionLocalChats()
+                    try:
+                        chat_id = msg.get("chat_id") or msg.get("group_id") or from_num
+                        chats_msg = ChatMessage(
+                            platform="WHATSAPP",
+                            chat_id=chat_id,
+                            user_id=from_num,
+                            username=profile_name,
+                            message_text=text_body
+                        )
+                        chats_db.add(chats_msg)
+                        chats_db.commit()
+                    except Exception as e:
+                        print(f"Error logging WhatsApp message: {e}")
+                    finally:
+                        chats_db.close()
+
                 await process_wa_message(from_num, text_body, media_id, user, db)
 
 async def process_wa_message(from_num: str, text: str, media_id: Optional[str], user: models.User, db: Session):

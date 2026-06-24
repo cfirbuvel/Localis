@@ -5,6 +5,36 @@ export default function UserAnalytics() {
   const [search, setSearch] = useState('');
   const [error, setError] = useState('');
 
+  // User Message History Modal
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [userMessages, setUserMessages] = useState([]);
+  const [loadingUserMessages, setLoadingUserMessages] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+
+  const fetchUserMessages = async (userId) => {
+    setLoadingUserMessages(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:8000/api/chats/users/${userId}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setUserMessages(data);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoadingUserMessages(false);
+    }
+  };
+
+  const openChatHistory = (u) => {
+    setSelectedUser(u);
+    setShowModal(true);
+    fetchUserMessages(u.id);
+  };
+
   const fetchUsers = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -17,6 +47,44 @@ export default function UserAnalytics() {
         setUsers(data);
       } else {
         setError('Failed to load user directory.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Connection error.');
+    }
+  };
+
+  const handleBanToggle = async (userId, isBanned) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:8000/api/users/${userId}/ban?ban=${!isBanned}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        setError(data.detail || 'Failed to update user ban status.');
+      }
+    } catch (err) {
+      console.error(err);
+      setError('Connection error.');
+    }
+  };
+
+  const handleMuteToggle = async (userId, isMuted) => {
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`http://localhost:8000/api/users/${userId}/mute?mute=${!isMuted}`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (res.ok) {
+        fetchUsers();
+      } else {
+        const data = await res.json();
+        setError(data.detail || 'Failed to update user mute status.');
       }
     } catch (err) {
       console.error(err);
@@ -67,6 +135,7 @@ export default function UserAnalytics() {
                 <th style={{ padding: '12px' }}>Last Interaction</th>
                 <th style={{ padding: '12px' }}>Last Active At</th>
                 <th style={{ padding: '12px' }}>Status</th>
+                <th style={{ padding: '12px' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -79,7 +148,7 @@ export default function UserAnalytics() {
                     </div>
                   </td>
                   <td style={{ padding: '12px', fontWeight: 500 }}>
-                    {u.first_name || u.last_name ? `${u.first_name || ''} ${u.last_name || ''}`.strip() : 'N/A'}
+                    {u.first_name || u.last_name ? `${u.first_name || ''} ${u.last_name || ''}`.trim() : 'N/A'}
                   </td>
                   <td style={{ padding: '12px', textTransform: 'uppercase', color: 'var(--primary)', fontWeight: 600, fontSize: '0.8rem' }}>
                     {u.language_code || 'en'}
@@ -113,10 +182,102 @@ export default function UserAnalytics() {
                       <span className="badge badge-approved" style={{ fontSize: '0.75rem' }}>Active</span>
                     )}
                   </td>
+                  <td style={{ padding: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        onClick={() => openChatHistory(u)}
+                        className="btn btn-secondary"
+                        style={{ padding: '6px 12px', fontSize: '0.75rem', background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', color: 'white' }}
+                      >
+                        Logs
+                      </button>
+                      <button 
+                        onClick={() => handleBanToggle(u.id, u.is_banned)}
+                        className={`btn ${u.is_banned ? 'btn-success' : 'btn-danger'}`}
+                        style={{ padding: '6px 12px', fontSize: '0.75rem' }}
+                      >
+                        {u.is_banned ? 'Unban' : 'Ban'}
+                      </button>
+                      <button 
+                        onClick={() => handleMuteToggle(u.id, u.is_muted)}
+                        className="btn"
+                        style={{ 
+                          padding: '6px 12px', 
+                          fontSize: '0.75rem', 
+                          background: u.is_muted ? 'var(--success)' : '#e0a800', 
+                          border: 'none', 
+                          color: 'white' 
+                        }}
+                      >
+                        {u.is_muted ? 'Unmute' : 'Mute'}
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+
+      {showModal && selectedUser && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0, 0, 0, 0.75)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div className="glass-panel" style={{
+            maxWidth: '600px',
+            width: '100%',
+            maxHeight: '85vh',
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '30px',
+            position: 'relative',
+            background: '#0d1117'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '1.25rem' }}>
+                💬 Chat Logs: @{selectedUser.username || 'unknown'}
+              </h3>
+              <button 
+                onClick={() => { setShowModal(false); setSelectedUser(null); setUserMessages([]); }}
+                className="btn btn-secondary"
+                style={{ padding: '6px 12px', fontSize: '0.8rem' }}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={{ flex: 1, overflowY: 'auto', marginBottom: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {loadingUserMessages ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-secondary)', padding: '20px 0' }}>Loading user messages...</div>
+              ) : userMessages.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0' }}>No message history in the last 14 days.</div>
+              ) : (
+                userMessages.map(msg => (
+                  <div key={msg.id} style={{ padding: '12px', borderRadius: '8px', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
+                      <span style={{ fontWeight: 600, color: msg.platform === 'TELEGRAM' ? '#24A1DE' : '#25D366' }}>
+                        {msg.platform === 'TELEGRAM' ? 'Telegram' : 'WhatsApp'} &bull; {msg.location_name}
+                      </span>
+                      <span>{new Date(msg.timestamp).toLocaleString()}</span>
+                    </div>
+                    <div style={{ color: 'white', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.875rem' }}>{msg.message_text}</div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>

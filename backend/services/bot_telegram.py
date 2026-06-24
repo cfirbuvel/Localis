@@ -160,6 +160,26 @@ async def handle_telegram_update(update: dict, db: Session):
         await send_message(chat_id, "❌ Your account is banned from using this service.")
         return
 
+    # Log the Telegram group chat message to chats.db
+    chat_type = message.get("chat", {}).get("type", "private")
+    if chat_type in ["group", "supergroup"] and text:
+        from backend.database_chats import SessionLocalChats, ChatMessage
+        chats_db = SessionLocalChats()
+        try:
+            msg_log = ChatMessage(
+                platform="TELEGRAM",
+                chat_id=chat_id,
+                user_id=telegram_id,
+                username=username or f"TG_{telegram_id}",
+                message_text=text
+            )
+            chats_db.add(msg_log)
+            chats_db.commit()
+        except Exception as e:
+            safe_print(f"Error logging Telegram message: {e}")
+        finally:
+            chats_db.close()
+
     # Check for location attachment
     if "location" in message:
         loc = message["location"]
