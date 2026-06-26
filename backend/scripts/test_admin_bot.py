@@ -1,4 +1,6 @@
 import os
+os.environ["DATABASE_URL"] = "sqlite:///./test_neighborhoods.db"
+os.environ["DATABASE_CHATS_URL"] = "sqlite:///./test_chats.db"
 import sys
 from unittest.mock import patch, AsyncMock
 
@@ -195,6 +197,11 @@ def run_tests(mock_geo, mock_search, mock_create):
     payload_cb["callback_query"]["data"] = "city_sugg_link_0"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
+
+    # Complete creation up to street
+    payload_cb["callback_query"]["data"] = "req_missing_up_to_street"
+    response = client.post("/webhooks/telegram", json=payload_cb)
+    assert response.status_code == 200
     
     # Check DB: Node Giv'atayim/Givatayim must be created and linked to the mock/real suggestion group chat
     givatayim_node = db.query(LocationNode).filter(LocationNode.level == "CITY", LocationNode.name.ilike("%גבעתיים%")).first()
@@ -207,6 +214,15 @@ def run_tests(mock_geo, mock_search, mock_create):
     print(f"[OK] City node created: '{givatayim_node.name}' (ID: {givatayim_node.id}) and linked to Telegram chat ID: {tg_group.chat_id}")
 
     db.close()
+    
+    # Clean up test database files
+    for f in ["test_neighborhoods.db", "test_chats.db", "test_neighborhoods.db-journal", "test_chats.db-journal", "neighborhoods.db-journal", "chats.db-journal"]:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
+                
     print("\nAll targeted Telegram admin bot workflow tests PASSED successfully!")
     print("====================================================")
 

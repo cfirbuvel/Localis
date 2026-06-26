@@ -1,4 +1,6 @@
 import os
+os.environ["DATABASE_URL"] = "sqlite:///./test_neighborhoods.db"
+os.environ["DATABASE_CHATS_URL"] = "sqlite:///./test_chats.db"
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -13,6 +15,60 @@ client = TestClient(app)
 
 def test_flow():
     print("Starting API integration verification tests (In-Memory)...")
+    
+    # 0. Initialize test database
+    from backend.database import Base, engine
+    from backend.scripts.seed_db import seed
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    seed()
+    
+    # Clean up persistent user states JSON files for a completely clean run
+    for fname in ["user_states.json", "user_states_wa.json"]:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "services", fname)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+    # Seed test hierarchy nodes
+    db = SessionLocal()
+    from backend.models import LocationNode, GroupChat
+    
+    israel = LocationNode(id=1, name="Israel", level="COUNTRY", parent_id=None, latitude=31.046051, longitude=34.851612, radius=100000.0)
+    db.add(israel)
+    db.commit()
+
+    district = LocationNode(id=2, name="מחוז תל אביב", level="DISTRICT", parent_id=1, latitude=32.0853, longitude=34.7818, radius=15000.0)
+    db.add(district)
+    db.commit()
+
+    tel_aviv = LocationNode(id=3, name="Tel Aviv", level="CITY", parent_id=2, latitude=32.0853, longitude=34.7818, radius=15000.0)
+    db.add(tel_aviv)
+    db.commit()
+
+    florentin = LocationNode(id=4, name="Florentin", level="NEIGHBORHOOD", parent_id=3, latitude=32.056, longitude=34.772, radius=800.0)
+    db.add(florentin)
+    db.commit()
+
+    herzel = LocationNode(id=5, name="Herzel", level="STREET", parent_id=4, latitude=32.058, longitude=34.771, radius=250.0)
+    db.add(herzel)
+    db.commit()
+
+    herzel12 = LocationNode(id=6, name="Herzel 12", level="BUILDING", parent_id=5, latitude=32.0583, longitude=34.7715, radius=50.0)
+    db.add(herzel12)
+    db.commit()
+
+    # Create default groups for building 6
+    tg_group = GroupChat(location_id=6, platform="TELEGRAM", chat_id="tg_chat_herzel12", type="PRIVATE", invite_link="https://t.me/joinchat/tg_chat_herzel12")
+    wa_group = GroupChat(location_id=6, platform="WHATSAPP", chat_id="wa_chat_herzel12", type="PRIVATE", invite_link="https://chat.whatsapp.com/wa_chat_herzel12")
+    db.add(tg_group)
+    db.add(wa_group)
+    db.commit()
+    db.close()
+
+    print("[OK] Test database initialized, states cleaned, and test hierarchy seeded.")
 
     # 1. Login with Super Admin credentials
     print("Testing Login...")
@@ -100,7 +156,7 @@ def test_flow():
         "parent_id": new_loc["id"]
     }, headers=mgr_headers)
     assert response.status_code == 200, f"Manager failed to add child street: {response.text}"
-    print("[OK] Success: florentin_manager created Shabazi Street under Neve Tzedek.")
+    print("[OK] Successfully created street 'Shabazi Street' under Neve Tzedek.")
 
     # 7. Test permission boundary: Try to add a street under Florentin (should FAIL because manager is only for Neve Tzedek)
     florentin_node = next(l for l in locations if l["level"] == "NEIGHBORHOOD" and l["name"] == "Florentin")
@@ -114,6 +170,14 @@ def test_flow():
     print("[OK] Success: florentin_manager blocked from editing Florentin branch (403 Forbidden).")
 
     print("\nAll integration verification tests PASSED successfully!")
+
+    # Clean up test database files
+    for f in ["test_neighborhoods.db", "test_chats.db", "test_neighborhoods.db-journal", "test_chats.db-journal", "neighborhoods.db-journal", "chats.db-journal"]:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     test_flow()

@@ -5,18 +5,16 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from backend.database import SessionLocal
 from backend import config
-from backend.models import User, LocationNode, GroupChat, RoleAssignment
+from backend.models import User, RoleAssignment
 from backend.services.auth import get_password_hash
 
 def seed():
     db = SessionLocal()
     try:
-        print("Seeding database...")
-
-        # 1. Create Super Admin User if not exists
+        # Create Super Admin User if it doesn't exist
         admin_username = config.SUPER_ADMIN_USERNAME
-        admin = db.query(User).filter(User.username == admin_username).first()
-        if not admin:
+        exists = db.query(User).filter(User.username == admin_username).first()
+        if not exists:
             print(f"Creating Super Admin user: {admin_username}")
             admin = User(
                 username=admin_username,
@@ -28,15 +26,8 @@ def seed():
             db.add(admin)
             db.commit()
             db.refresh(admin)
-        else:
-            print(f"Super Admin user {admin_username} already exists.")
 
-        # 2. Assign Super Admin role
-        admin_role = db.query(RoleAssignment).filter(
-            RoleAssignment.user_id == admin.id,
-            RoleAssignment.role == "SUPER_ADMIN"
-        ).first()
-        if not admin_role:
+            # Assign Super Admin role
             print("Assigning SUPER_ADMIN role...")
             admin_role = RoleAssignment(
                 user_id=admin.id,
@@ -45,11 +36,9 @@ def seed():
             )
             db.add(admin_role)
             db.commit()
+            print("Super Admin seeded successfully!")
         else:
-            print("SUPER_ADMIN role already assigned.")
-
-        db.commit()
-        print("Database seeded successfully!")
+            print("Super Admin user already exists, skipping seeding.")
 
     except Exception as e:
         db.rollback()

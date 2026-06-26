@@ -1,4 +1,6 @@
 import os
+os.environ["DATABASE_URL"] = "sqlite:///./test_neighborhoods.db"
+os.environ["DATABASE_CHATS_URL"] = "sqlite:///./test_chats.db"
 import sys
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -21,7 +23,53 @@ def run_simulation():
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     seed()
-    print("[OK] Database reset and seeded.")
+    
+    # Clean up persistent user states JSON files for a completely clean run
+    for fname in ["user_states.json", "user_states_wa.json"]:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "services", fname)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
+
+    # Seed test hierarchy nodes
+    db = SessionLocal()
+    from backend.models import LocationNode, GroupChat
+    
+    israel = LocationNode(id=1, name="Israel", level="COUNTRY", parent_id=None, latitude=31.046051, longitude=34.851612, radius=100000.0)
+    db.add(israel)
+    db.commit()
+
+    district = LocationNode(id=2, name="מחוז תל אביב", level="DISTRICT", parent_id=1, latitude=32.0853, longitude=34.7818, radius=15000.0)
+    db.add(district)
+    db.commit()
+
+    tel_aviv = LocationNode(id=3, name="Tel Aviv", level="CITY", parent_id=2, latitude=32.0853, longitude=34.7818, radius=15000.0)
+    db.add(tel_aviv)
+    db.commit()
+
+    florentin = LocationNode(id=4, name="Florentin", level="NEIGHBORHOOD", parent_id=3, latitude=32.056, longitude=34.772, radius=800.0)
+    db.add(florentin)
+    db.commit()
+
+    herzel = LocationNode(id=5, name="Herzel", level="STREET", parent_id=4, latitude=32.058, longitude=34.771, radius=250.0)
+    db.add(herzel)
+    db.commit()
+
+    herzel12 = LocationNode(id=6, name="Herzel 12", level="BUILDING", parent_id=5, latitude=32.0583, longitude=34.7715, radius=50.0)
+    db.add(herzel12)
+    db.commit()
+
+    # Create default groups for building 6
+    tg_group = GroupChat(location_id=6, platform="TELEGRAM", chat_id="tg_chat_herzel12", type="PRIVATE", invite_link="https://t.me/joinchat/tg_chat_herzel12")
+    wa_group = GroupChat(location_id=6, platform="WHATSAPP", chat_id="wa_chat_herzel12", type="PRIVATE", invite_link="https://chat.whatsapp.com/wa_chat_herzel12")
+    db.add(tg_group)
+    db.add(wa_group)
+    db.commit()
+    db.close()
+
+    print("[OK] Database reset, states cleaned, and test hierarchy seeded.")
 
     # User details
     tg_user_id = "987654321"
@@ -82,37 +130,44 @@ def run_simulation():
     assert response.status_code == 200
     print("[OK] Navigation to country Israel successful.")
 
-    # 4. Simulate Alice selecting City 'Tel Aviv' (ID: 2)
-    print("\n[STEP 4] Alice clicks Tel Aviv (node_2) button...")
+    # 4. Simulate Alice selecting District 'מחוז תל אביב' (ID: 2)
+    print("\n[STEP 4] Alice clicks District מחוז תל אביב (node_2) button...")
     payload_cb["callback_query"]["data"] = "node_2"
+    response = client.post("/webhooks/telegram", json=payload_cb)
+    assert response.status_code == 200
+    print("[OK] Navigation to district מחוז תל אביב successful.")
+
+    # 4b. Simulate Alice selecting City 'Tel Aviv' (ID: 3)
+    print("\n[STEP 4b] Alice clicks City Tel Aviv (node_3) button...")
+    payload_cb["callback_query"]["data"] = "node_3"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] Navigation to city Tel Aviv successful.")
 
-    # 5. Simulate Alice clicking neighborhood 'Florentin' (ID: 3)
-    print("\n[STEP 5] Alice clicks Florentin (node_3) button...")
-    payload_cb["callback_query"]["data"] = "node_3"
+    # 5. Simulate Alice clicking neighborhood 'Florentin' (ID: 4)
+    print("\n[STEP 5] Alice clicks Florentin (node_4) button...")
+    payload_cb["callback_query"]["data"] = "node_4"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] Navigation to neighborhood Florentin successful.")
 
-    # 6. Simulate Alice clicking street 'Herzel' (ID: 4)
-    print("\n[STEP 6] Alice clicks Herzel Street (node_4) button...")
-    payload_cb["callback_query"]["data"] = "node_4"
+    # 6. Simulate Alice clicking street 'Herzel' (ID: 5)
+    print("\n[STEP 6] Alice clicks Herzel Street (node_5) button...")
+    payload_cb["callback_query"]["data"] = "node_5"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] Navigation to Herzel Street successful.")
 
-    # 7. Simulate Alice clicking private building 'Herzel 12' (ID: 5)
-    print("\n[STEP 7] Alice clicks building Herzel 12 (node_5) button...")
-    payload_cb["callback_query"]["data"] = "node_5"
+    # 7. Simulate Alice clicking private building 'Herzel 12' (ID: 6)
+    print("\n[STEP 7] Alice clicks building Herzel 12 (node_6) button...")
+    payload_cb["callback_query"]["data"] = "node_6"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] Navigation to building node returned prompt.")
 
     # 8. Simulate Alice clicking '🔑 Request Entry (Verify)' button
-    print("\n[STEP 8] Alice triggers verification process (verify_5)...")
-    payload_cb["callback_query"]["data"] = "verify_5"
+    print("\n[STEP 8] Alice triggers verification process (verify_6)...")
+    payload_cb["callback_query"]["data"] = "verify_6"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] State changed to awaiting_document.")
@@ -172,8 +227,8 @@ def run_simulation():
     db.close()
 
     # 11. Alice clicks Herzel 12 button again (should now receive group links)
-    print("\n[STEP 11] Alice clicks building Herzel 12 (node_5) again...")
-    payload_cb["callback_query"]["data"] = "verify_5"
+    print("\n[STEP 11] Alice clicks building Herzel 12 (node_6) again...")
+    payload_cb["callback_query"]["data"] = "verify_6"
     response = client.post("/webhooks/telegram", json=payload_cb)
     assert response.status_code == 200
     print("[OK] Alice successfully retrieved private group links.")
@@ -233,6 +288,14 @@ def run_simulation():
     assert alice_db.is_muted == True
     print(f"  DB check: User '{alice_db.username}' is_muted = {alice_db.is_muted} (Auto-muted successfully).")
     db.close()
+    
+    # Clean up test database files
+    for f in ["test_neighborhoods.db", "test_chats.db", "test_neighborhoods.db-journal", "test_chats.db-journal", "neighborhoods.db-journal", "chats.db-journal"]:
+        if os.path.exists(f):
+            try:
+                os.remove(f)
+            except Exception:
+                pass
     
     print("\nAll bot interaction and workflow simulation verification tests PASSED successfully!")
     print("====================================================")
