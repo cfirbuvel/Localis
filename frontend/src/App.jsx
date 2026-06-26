@@ -7,6 +7,7 @@ import CrisisFeed from './components/CrisisFeed';
 import ModeratorFeed from './components/ModeratorFeed';
 import CommunityApprovals from './components/CommunityApprovals';
 import UserAnalytics from './components/UserAnalytics';
+import MapDashboard from './components/MapDashboard';
 
 
 export default function App() {
@@ -19,7 +20,8 @@ export default function App() {
     locationsCount: 0,
     pendingVerifications: 0,
     activeEmergencies: 0,
-    flaggedLogs: 0
+    flaggedLogs: 0,
+    pendingCommunityRequests: 0
   });
 
   // Load user session from localstorage
@@ -79,11 +81,25 @@ export default function App() {
       }
       const logs = modRes.ok ? await modRes.json() : [];
 
+      // Fetch Pending Community Requests
+      let commRequests = [];
+      if (role === 'SUPER_ADMIN' || role === 'MANAGER') {
+        const commRes = await fetch('http://localhost:8000/api/community-requests/pending', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (commRes.status === 401 || commRes.status === 403) {
+          handleLogout();
+          return;
+        }
+        commRequests = commRes.ok ? await commRes.json() : [];
+      }
+
       setStats({
         locationsCount: locations.length,
         pendingVerifications: verifs.length,
         activeEmergencies: activeEmCount,
-        flaggedLogs: logs.length
+        flaggedLogs: logs.length,
+        pendingCommunityRequests: commRequests.length
       });
     } catch (err) {
       console.error("Error fetching stats:", err);
@@ -130,6 +146,8 @@ export default function App() {
         return <CommunityApprovals />;
       case 'users':
         return <UserAnalytics />;
+      case 'map':
+        return <MapDashboard />;
       default:
         return <HierarchyManager />;
     }
@@ -150,7 +168,14 @@ export default function App() {
             className={`nav-item ${activeTab === 'hierarchy' ? 'active' : ''}`}
             onClick={() => setActiveTab('hierarchy')}
           >
-            <span>🗺️</span> Location Tree
+            <span>🌳</span> Location Tree
+          </div>
+
+          <div 
+            className={`nav-item ${activeTab === 'map' ? 'active' : ''}`}
+            onClick={() => setActiveTab('map')}
+          >
+            <span>🗺️</span> Live Map
           </div>
 
           <div 
@@ -199,6 +224,11 @@ export default function App() {
               onClick={() => setActiveTab('approvals')}
             >
               <span>✅</span> Approvals Queue
+              {stats.pendingCommunityRequests > 0 && (
+                <span className="badge badge-pending" style={{ marginLeft: 'auto' }}>
+                  {stats.pendingCommunityRequests}
+                </span>
+              )}
             </div>
           )}
 
@@ -281,6 +311,16 @@ export default function App() {
               <div className="stat-label">AI Flagged Messages</div>
             </div>
           </div>
+
+          {(role === 'SUPER_ADMIN' || role === 'MANAGER') && (
+            <div className="glass-panel stat-card" style={{ cursor: 'pointer' }} onClick={() => setActiveTab('approvals')}>
+              <div className="stat-icon icon-orange">✅</div>
+              <div>
+                <div className="stat-value">{stats.pendingCommunityRequests}</div>
+                <div className="stat-label">Pending Approvals</div>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Panel View */}
