@@ -289,10 +289,21 @@ def create_location(
     tg_chat_id = f"tg_chat_{loc.name.lower().replace(' ', '_')}"
     wa_chat_id = f"wa_chat_{loc.name.lower().replace(' ', '_')}"
     
-    tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
-    wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
-    db.add(tg_group)
-    db.add(wa_group)
+    existing_tg = db.query(models.GroupChat).filter(
+        models.GroupChat.location_id == new_node.id,
+        models.GroupChat.platform == "TELEGRAM"
+    ).first()
+    if not existing_tg:
+        tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
+        db.add(tg_group)
+
+    existing_wa = db.query(models.GroupChat).filter(
+        models.GroupChat.location_id == new_node.id,
+        models.GroupChat.platform == "WHATSAPP"
+    ).first()
+    if not existing_wa:
+        wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
+        db.add(wa_group)
     db.commit()
     db.refresh(new_node)
     
@@ -393,7 +404,7 @@ def get_pending_verifications(
     return results
 
 @app.post("/api/verifications/{verification_id}/review", response_model=schemas.ActionResponse)
-def review_verification(
+async def review_verification(
     verification_id: int,
     review: schemas.VerificationReview,
     current_user: models.User = Depends(get_current_user),
@@ -412,16 +423,31 @@ def review_verification(
     v.rejection_reason = review.rejection_reason
     db.commit()
 
-    # Trigger sending invite link if approved
+    # Trigger sending invite link and approving group joins if approved
     if review.status == "APPROVED":
         # Find building group invite links
         groups = db.query(models.GroupChat).filter(
             models.GroupChat.location_id == v.building_id,
             models.GroupChat.type == "PRIVATE"
         ).all()
-        # In a real app: Send API message to User via Bot
-        print(f"[BOT OUTBOX] Approved verification. Sending citizen building links: {[g.invite_link for g in groups]}")
         
+        # Approve join request using userbot
+        if v.user.telegram_id:
+            from backend.services.telegram_userbot import approve_telegram_group_join
+            import asyncio
+            for g in groups:
+                if g.platform == "TELEGRAM":
+                    asyncio.create_task(approve_telegram_group_join(g.chat_id, v.user.telegram_id))
+                    
+            # Send Telegram Bot message
+            from backend.services.bot_telegram import send_message
+            links_text = "\n".join([f"- [{g.platform.title()} Group]({g.invite_link})" for g in groups])
+            user_msg = (
+                f"🎉 *Good news!*\nYour residency verification for *{v.building.name}* has been approved by the administrators!\n\n"
+                f"You can now join the private group chats:\n{links_text}"
+            )
+            asyncio.create_task(send_message(v.user.telegram_id, user_msg))
+            
     return {"success": True, "message": f"Verification request has been {review.status}."}
 
 # ==========================================
@@ -641,86 +667,28 @@ async def review_community_request(
     if not req:
         raise HTTPException(status_code=404, detail="Community request not found.")
 
-    req.status = review.status
-    db.commit()
-
     if review.status == "APPROVED":
-        # Normalize name
-        normalized_name = normalize_location_name(req.name, req.level)
-        
-        # Check if node already exists under the parent (case-insensitive)
-        existing_node = db.query(models.LocationNode).filter(
-            models.LocationNode.name.ilike(normalized_name),
-            models.LocationNode.level == req.level,
-            models.LocationNode.parent_id == req.parent_id
-        ).first()
-        
-        if existing_node:
-            new_node = existing_node
-        else:
-            # Create Location Node
-            new_node = models.LocationNode(
-                name=normalized_name,
-                level=req.level,
-                parent_id=req.parent_id,
-                created_by_id=req.user_id
-            )
-            db.add(new_node)
-            db.commit()
-            db.refresh(new_node)
-
-        # Update child requests waiting for this parent request
-        child_reqs = db.query(models.CommunityRequest).filter(
-            models.CommunityRequest.parent_request_id == req.id
-        ).all()
-        for child in child_reqs:
-            child.parent_id = new_node.id
-            child.parent_request_id = None
-        db.commit()
-
-        # Create Groups
-        gtype = "PRIVATE" if new_node.level == "BUILDING" else "PUBLIC"
-        
-        if review.custom_group_chat_id and review.custom_group_invite_link:
-            tg_chat_id = review.custom_group_chat_id
-            tg_invite_link = review.custom_group_invite_link
-        else:
-            from backend.services.telegram_userbot import create_telegram_group
-            tg_info = await create_telegram_group(new_node.name, new_node.level, node_id=new_node.id)
-            tg_chat_id = tg_info["chat_id"]
-            tg_invite_link = tg_info["invite_link"]
+        if req.level == "BUILDING" and not req.proof_url:
+            raise HTTPException(status_code=400, detail="Cannot approve building request without KYC proof.")
             
-        tg_group = models.GroupChat(
-            location_id=new_node.id,
-            platform="TELEGRAM",
-            chat_id=tg_chat_id,
-            type=gtype,
-            invite_link=tg_invite_link
+        from backend.services.location import approve_request_and_hierarchy
+        await approve_request_and_hierarchy(
+            db=db,
+            req=req,
+            custom_group_chat_id=review.custom_group_chat_id,
+            custom_group_invite_link=review.custom_group_invite_link,
+            action_by=f"@{current_user.username or current_user.telegram_id}"
         )
-        db.add(tg_group)
-
-        # WhatsApp Mock Group
-        wa_chat_id = f"wa_chat_{new_node.name.lower().replace(' ', '_')}"
-        wa_group = models.GroupChat(
-            location_id=new_node.id,
-            platform="WHATSAPP",
-            chat_id=wa_chat_id,
-            type=gtype,
-            invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
-        )
-        db.add(wa_group)
+    else:
+        req.status = review.status
         db.commit()
-
-        # Send Telegram notification if the user has a telegram_id
         if req.user.telegram_id:
             from backend.services.bot_telegram import send_message
-            msg = (
-                f"🎉 *Good news!*\nYour request to create the community *{req.name}* ({req.level.title()}) has been approved!\n\n"
-                f"You can join the new group here:\n"
-                f"👉 [Telegram Chat]({tg_invite_link})\n"
-                f"👉 [WhatsApp Chat](https://chat.whatsapp.com/{wa_chat_id})"
-            )
+            msg = f"❌ Your request to create *{req.name}* ({req.level.title()}) was rejected by the administrators."
             await send_message(req.user.telegram_id, msg)
+
+    from backend.services.bot_telegram import notify_admins_request_update
+    await notify_admins_request_update(db, req, f"@{current_user.username or current_user.telegram_id}", review.status)
 
     return {"success": True, "message": f"Community request has been {review.status}."}
 
@@ -729,7 +697,7 @@ async def review_community_request(
 # ==========================================
 
 @app.get("/api/chats/locations/{location_id}")
-def get_location_chats(
+async def get_location_chats(
     location_id: int,
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -737,16 +705,47 @@ def get_location_chats(
     groups = db.query(models.GroupChat).filter(models.GroupChat.location_id == location_id).all()
     if not groups:
         return []
-    
+
     chat_ids = [g.chat_id for g in groups]
-    
+
     from backend.database_chats import SessionLocalChats, ChatMessage
     chats_db = SessionLocalChats()
     try:
         messages = chats_db.query(ChatMessage).filter(
             ChatMessage.chat_id.in_(chat_ids)
         ).order_by(ChatMessage.timestamp.desc()).limit(100).all()
-        
+
+        # Fallback to userbot to fetch history for Telegram groups if no local Telegram messages exist
+        telegram_chat_ids = [g.chat_id for g in groups if g.platform == "TELEGRAM" and not g.chat_id.startswith("tg_chat_")]
+        if telegram_chat_ids and not any(m.platform == "TELEGRAM" for m in messages):
+            from backend.services.telegram_userbot import fetch_group_messages_via_userbot
+            for tg_chat_id in telegram_chat_ids:
+                userbot_messages = await fetch_group_messages_via_userbot(tg_chat_id, limit=50)
+                if userbot_messages:
+                    for msg in userbot_messages:
+                        # Prevent duplicate entries by checking if this message was already logged
+                        exists = chats_db.query(ChatMessage).filter(
+                            ChatMessage.chat_id == msg["chat_id"],
+                            ChatMessage.user_id == msg["user_id"],
+                            ChatMessage.message_text == msg["message_text"]
+                        ).first()
+                        if not exists:
+                            db_msg = ChatMessage(
+                                platform=msg["platform"],
+                                chat_id=msg["chat_id"],
+                                user_id=msg["user_id"],
+                                username=msg["username"],
+                                message_text=msg["message_text"],
+                                timestamp=msg["timestamp"]
+                            )
+                            chats_db.add(db_msg)
+                    chats_db.commit()
+                    
+                    # Re-query messages to include the newly cached ones
+                    messages = chats_db.query(ChatMessage).filter(
+                        ChatMessage.chat_id.in_(chat_ids)
+                    ).order_by(ChatMessage.timestamp.desc()).limit(100).all()
+
         results = []
         for m in messages:
             results.append({

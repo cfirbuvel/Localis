@@ -108,6 +108,10 @@ class LocationResponse(BaseModel):
     parent_id: Optional[int] = None
     created_by: Optional[UserMini] = None
     groups: List[GroupChatResponse] = []
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
+    radius: Optional[float] = None
+    verified_users_count: int = 0
 
     class Config:
         from_attributes = True

@@ -70,6 +70,12 @@ class LocationNode(Base):
     verifications = relationship("Verification", back_populates="building", cascade="all, delete-orphan")
     emergencies = relationship("Emergency", back_populates="location", cascade="all, delete-orphan")
 
+    @property
+    def verified_users_count(self) -> int:
+        if self.level == "BUILDING":
+            return sum(1 for v in self.verifications if v.status == "APPROVED")
+        return sum(child.verified_users_count for child in self.children)
+
 class GroupChat(Base):
     __tablename__ = "groups"
 
