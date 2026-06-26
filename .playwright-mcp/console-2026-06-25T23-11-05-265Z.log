@@ -1,0 +1,10 @@
+[    1515ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=dc6bb5eb:14337
+[    1656ms] [VERBOSE] [DOM] Input elements should have autocomplete attributes (suggested: "current-password"): (More info: https://goo.gl/9p2vKq) %o @ http://localhost:5174/:0
+[  448740ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5174/node_modules/.vite/deps/react-dom_client.js?v=dc6bb5eb:14337
+[  687923ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:8000/api/locations:0
+[  687923ms] [ERROR] Error fetching map dashboard data: TypeError: Failed to fetch
+    at fetchData (http://localhost:5174/src/components/MapDashboard.jsx?t=1782429491689:50:25)
+    at http://localhost:5174/src/components/MapDashboard.jsx?t=1782429491689:66:38 @ http://localhost:5174/@vite/client:524
+[  689092ms] [ERROR] Failed to load resource: net::ERR_CONNECTION_RESET @ http://localhost:8000/api/locations:0
+[  689092ms] [ERROR] Error fetching stats: TypeError: Failed to fetch
+    at fetchStats (http://localhost:5174/src/App.jsx?t=1782429491689:42:25) @ http://localhost:5174/@vite/client:524

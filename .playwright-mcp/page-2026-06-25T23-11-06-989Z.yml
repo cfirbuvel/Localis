@@ -1,0 +1,14 @@
+- generic [ref=e4]:
+  - generic [ref=e5]:
+    - generic [ref=e6]: 🌍
+    - heading "BotOS Admin" [level=2] [ref=e7]
+    - paragraph [ref=e8]: Global Neighborhood Coordination Platform
+  - generic [ref=e9]:
+    - generic [ref=e10]:
+      - generic [ref=e11]: USERNAME
+      - textbox "e.g. admin" [ref=e12]
+    - generic [ref=e13]:
+      - generic [ref=e14]: PASSWORD
+      - textbox "••••••••" [ref=e15]
+    - button "Sign In" [ref=e16] [cursor=pointer]
+  - generic [ref=e17]: Super Admin and regional managers only.

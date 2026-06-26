@@ -1,0 +1,107 @@
+- generic [ref=e18]:
+  - complementary [ref=e19]:
+    - generic [ref=e20]:
+      - generic [ref=e21]: 🌍
+      - generic [ref=e22]: BotOS Panel
+    - navigation [ref=e23]:
+      - generic [ref=e24] [cursor=pointer]:
+        - generic [ref=e25]: 🌳
+        - text: Location Tree
+      - generic [ref=e26] [cursor=pointer]:
+        - generic [ref=e27]: 🗺️
+        - text: Live Map
+      - generic [ref=e28] [cursor=pointer]:
+        - generic [ref=e29]: 🔑
+        - text: Verifications
+      - generic [ref=e30] [cursor=pointer]:
+        - generic [ref=e31]: 👥
+        - text: Manage Roles
+      - generic [ref=e32] [cursor=pointer]:
+        - generic [ref=e33]: 🚨
+        - text: Crisis Board
+        - generic [ref=e34]: "1"
+      - generic [ref=e35] [cursor=pointer]:
+        - generic [ref=e36]: 🤖
+        - text: AI Moderation
+      - generic [ref=e37] [cursor=pointer]:
+        - generic [ref=e38]: ✅
+        - text: Approvals Queue
+      - generic [ref=e39] [cursor=pointer]:
+        - generic [ref=e40]: 📊
+        - text: Users Directory
+    - generic [ref=e41]:
+      - generic [ref=e42]: AD
+      - generic [ref=e43]:
+        - generic [ref=e44]: admin
+        - text: SUPER_ADMIN
+      - button "Exit" [ref=e45] [cursor=pointer]
+  - main [ref=e46]:
+    - generic [ref=e47]:
+      - generic [ref=e48]: ⚠️
+      - generic [ref=e49]:
+        - heading "CRITICAL EMERGENCY ALERT ONGOING" [level=3] [ref=e50]
+        - paragraph [ref=e51]: There are 1 active crisis alerts needing immediate attention. Check the Crisis Board tab.
+      - button "View Board" [ref=e52] [cursor=pointer]
+    - generic [ref=e53]:
+      - generic [ref=e54] [cursor=pointer]:
+        - generic [ref=e55]: 📍
+        - generic [ref=e56]:
+          - generic [ref=e57]: "9"
+          - generic [ref=e58]: Total Location Nodes
+      - generic [ref=e59] [cursor=pointer]:
+        - generic [ref=e60]: 🔑
+        - generic [ref=e61]:
+          - generic [ref=e62]: "0"
+          - generic [ref=e63]: Pending Verifications
+      - generic [ref=e64] [cursor=pointer]:
+        - generic [ref=e65]: 🚨
+        - generic [ref=e66]:
+          - generic [ref=e67]: "1"
+          - generic [ref=e68]: Active Emergencies
+      - generic [ref=e69] [cursor=pointer]:
+        - generic [ref=e70]: 🤖
+        - generic [ref=e71]:
+          - generic [ref=e72]: "0"
+          - generic [ref=e73]: AI Flagged Messages
+      - generic [ref=e74] [cursor=pointer]:
+        - generic [ref=e75]: ✅
+        - generic [ref=e76]:
+          - generic [ref=e77]: "0"
+          - generic [ref=e78]: Pending Approvals
+    - generic [ref=e106]:
+      - generic [ref=e107]:
+        - generic [ref=e108]:
+          - heading "🗺️ Real-Time Community Map" [level=1] [ref=e109]
+          - paragraph [ref=e110]: Live visual intelligence tracking verified buildings, resident distribution, and active crisis alerts.
+        - button "🔄 Live Sync" [ref=e111] [cursor=pointer]
+      - generic [ref=e113]:
+        - generic [ref=e114]:
+          - button "🏢 0" [ref=e115] [cursor=pointer]:
+            - generic [ref=e116]: 🏢
+            - generic [ref=e117]: "0"
+          - button "🏢 0" [ref=e118] [cursor=pointer]:
+            - generic [ref=e119]: 🏢
+            - generic [ref=e120]: "0"
+          - button "🏢 0" [ref=e121] [cursor=pointer]:
+            - generic [ref=e122]: 🏢
+            - generic [ref=e123]: "0"
+          - button "🏢 0" [ref=e124] [cursor=pointer]:
+            - generic [ref=e125]: 🏢
+            - generic [ref=e126]: "0"
+          - button "🏢 0" [ref=e127] [cursor=pointer]:
+            - generic [ref=e128]: 🏢
+            - generic [ref=e129]: "0"
+          - button "🚨" [ref=e130] [cursor=pointer]:
+            - generic [ref=e132]: 🚨
+        - generic:
+          - generic [ref=e133]:
+            - button "Zoom in" [ref=e134] [cursor=pointer]: +
+            - button "Zoom out" [ref=e135] [cursor=pointer]: −
+          - generic [ref=e136]:
+            - link "Leaflet" [ref=e137] [cursor=pointer]:
+              - /url: https://leafletjs.com
+              - img [ref=e138]
+              - text: Leaflet
+            - text: "| ©"
+            - link "CARTO" [ref=e142] [cursor=pointer]:
+              - /url: https://carto.com/attributions

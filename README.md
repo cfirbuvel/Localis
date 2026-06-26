@@ -6,16 +6,16 @@ A global-scale system for **neighborhood communication, smart community coordina
 
 ## 🚀 Key Features
 
-*   **Hierarchical Location Tree**: `Country > City > Neighborhood > Street > Building`.
-*   **Dynamic Auto-Creation**: Missing location nodes and their associated chats are automatically generated as users navigate.
-*   **Dual Bot Integrations**: Webhook handlers for official **Telegram Bot** and **WhatsApp Cloud (Business) API**.
-*   **Role-Based Security**:
-    *   *Super Admin* (global control, defined in `.env`).
-    *   *Managers* (assignable to any node; automatically inherits privileges for all subnodes).
-    *   *Moderators* (manage local chat moderation like muting/banning citizens).
-*   **Private Chat Verification**: Utility bills / lease documents uploaded via bots are queued on the React dashboard for manager approval. Approvals automatically trigger invite links.
-*   **Crisis Mode**: `/emergency <description>` alerts all regional administrators and pushes to dedicated active tickers.
-*   **AI Moderation Agent**: Intercepts citizen messages to flag spam, scams, and abuse (with an active Google Gemini API integration or rule-based fallback). Automatically mutes severe violations.
+* **Hierarchical Location Tree**: `Country > City > Neighborhood > Street > Building`.
+* **Dynamic Auto-Creation**: Missing location nodes and their associated chats are automatically generated as users navigate.
+* **Dual Bot Integrations**: Webhook handlers for official **Telegram Bot** and **WhatsApp Cloud (Business) API**.
+* **Role-Based Security**:
+  * *Super Admin* (global control, defined in `.env`).
+  * *Managers* (assignable to any node; automatically inherits privileges for all subnodes).
+  * *Moderators* (manage local chat moderation like muting/banning citizens).
+* **Private Chat Verification**: Utility bills / lease documents uploaded via bots are queued on the React dashboard for manager approval. Approvals automatically trigger invite links.
+* **Crisis Mode**: `/emergency <description>` alerts all regional administrators and pushes to dedicated active tickers.
+* **AI Moderation Agent**: Intercepts citizen messages to flag spam, scams, and abuse (with an active Google Gemini API integration or rule-based fallback). Automatically mutes severe violations.
 
 ---
 
@@ -62,31 +62,39 @@ BotOS/
 To run the entire system (fastapi backend + sqlite database + react frontend + bot webhook updates) using Docker:
 
 ### 1. Build and Start Containers
+
 ```powershell
 docker compose up --build -d
+docker compose build --no-cache frontend
 ```
 
 ### 2. Expose Bot Webhook & Set Telegram URL Automatically
+
 To run the tunnel and automatically configure the Telegram Bot webhook:
+
 ```powershell
 .\start_tunnel.ps1
 ```
+
 *Note: Make sure your `TELEGRAM_BOT_TOKEN` is configured in `backend/.env` first.*
 
 ### 3. Open Panel
+
 - **Frontend Dashboard**: [http://localhost:5173](http://localhost:5173) (User: `admin` / Password: `adminpass`)
-- **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
+* **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
 
 ---
 
 ## 🛠️ Backend Setup (Manual Run)
 
-
 ### 1. Prerequisites
+
 Ensure you have **Python 3.12+** installed.
 
 ### 2. Create Virtual Environment & Install Dependencies
+
 From the `BotOS` root directory:
+
 ```powershell
 # Create venv
 python -m venv venv
@@ -96,6 +104,7 @@ python -m venv venv
 ```
 
 ### 3. Initialize & Seed Database
+
 ```powershell
 # Create SQLite DB tables
 .\venv\Scripts\python.exe backend\scripts\init_db.py
@@ -105,7 +114,9 @@ python -m venv venv
 ```
 
 ### 4. Run Automated Test & Simulation Suite
+
 To run the automated API testing suite and the mock bot workflow simulation:
+
 ```powershell
 # Run API integration tests
 .\venv\Scripts\python.exe backend\scripts\test_in_memory.py
@@ -116,9 +127,11 @@ $env:PYTHONIOENCODING='utf-8'
 ```
 
 ### 5. Start Development Server
+
 ```powershell
 .\venv\Scripts\python.exe -m uvicorn backend.main:app --reload
 ```
+
 The API documentation will be available at [http://localhost:8000/docs](http://localhost:8000/docs).
 
 ---
@@ -126,18 +139,23 @@ The API documentation will be available at [http://localhost:8000/docs](http://l
 ## 💻 Frontend Setup
 
 ### 1. Install Node Modules
+
 From the `BotOS/frontend` directory:
+
 ```bash
 npm install
 ```
 
 ### 2. Start Dev Server
+
 ```bash
 npm run dev
 ```
+
 Open [http://localhost:5173](http://localhost:5173) in your browser. Log in using the seeded Super Admin credentials:
-*   **Username**: `admin`
-*   **Password**: `adminpass`
+
+* **Username**: `admin`
+* **Password**: `adminpass`
 
 ---
 
@@ -146,12 +164,14 @@ Open [http://localhost:5173](http://localhost:5173) in your browser. Log in usin
 To connect the code to live chat services, update `backend/.env` with your credentials:
 
 ### Telegram Setup
+
 1. Message **@BotFather** on Telegram to create a bot and get a `TELEGRAM_BOT_TOKEN`.
 2. Place the token in `.env`.
 3. Set your webhook endpoint pointing to your public server (e.g. using ngrok):
    `https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://<your-subdomain>.ngrok-free.app/webhooks/telegram`
 
 ### WhatsApp Cloud API Setup
+
 1. Go to the [Meta for Developers Portal](https://developers.facebook.com/) and create a Business App.
 2. Under WhatsApp Settings, configure a temporary or permanent **Access Token**, **Phone Number ID**, and **Business Account ID**.
 3. Set your webhook callback URL to `https://<your-subdomain>.ngrok-free.app/webhooks/whatsapp` and configure a `WHATSAPP_VERIFY_TOKEN` of your choice matching the value in `.env`.
