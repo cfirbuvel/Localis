@@ -110,6 +110,30 @@ async def send_telegram_request(method: str, payload: dict) -> bool:
         safe_print(f"[TELEGRAM API ERROR] Failed to call {method}: {e}")
         return False
 
+async def is_user_in_telegram_group(group_chat_id: str, user_telegram_id: str) -> bool:
+    token = config.TELEGRAM_BOT_TOKEN
+    if not token or ":" not in token:
+        return False
+    if not group_chat_id.startswith("-") and not group_chat_id.startswith("@"):
+        return False
+    url = f"https://api.telegram.org/bot{token}/getChatMember"
+    payload = {
+        "chat_id": group_chat_id,
+        "user_id": int(user_telegram_id)
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.post(url, json=payload, timeout=10.0)
+            if res.status_code == 200:
+                data = res.json()
+                if data.get("ok"):
+                    status = data.get("result", {}).get("status")
+                    if status in ["member", "creator", "administrator", "restricted"]:
+                        return True
+    except Exception as e:
+        safe_print(f"[TELEGRAM API ERROR] Failed to call getChatMember: {e}")
+    return False
+
 async def send_message(chat_id: str, text: str, reply_markup: dict = None):
     payload = {
         "chat_id": chat_id,
@@ -133,6 +157,51 @@ async def edit_message(chat_id: str, message_id: int, text: str, reply_markup: d
 
 async def answer_callback_query(callback_query_id: str):
     await send_telegram_request("answerCallbackQuery", {"callback_query_id": callback_query_id})
+
+
+async def notify_admins_new_request(db: Session, req: models.CommunityRequest):
+    # Query all users with role SUPER_ADMIN, MANAGER, MODERATOR and who have telegram_id set
+    admins = db.query(models.User).join(models.RoleAssignment).filter(
+        models.RoleAssignment.role.in_(["SUPER_ADMIN", "MANAGER", "MODERATOR"]),
+        models.User.telegram_id.isnot(None)
+    ).all()
+    
+    parent_name = req.parent.name if req.parent else 'Global'
+    text = (
+        f"🔔 *New Location/Community Request!*\n\n"
+        f"👤 *Requester*: @{req.user.username or req.user.telegram_id}\n"
+        f"📍 *Proposed Name*: {req.name} ({req.level.title()})\n"
+        f"Parent Node: {parent_name}\n"
+        f"Submitted: {req.created_at.strftime('%Y-%m-%d %H:%M')}\n"
+    )
+    keyboard = [
+        [{"text": "🔍 Review Request", "callback_data": f"admin_req_v_{req.id}"}]
+    ]
+    for admin in admins:
+        try:
+            await send_message(admin.telegram_id, text, reply_markup={"inline_keyboard": keyboard})
+        except Exception as e:
+            safe_print(f"Error notifying admin {admin.telegram_id}: {e}")
+
+async def notify_admins_request_update(db: Session, req: models.CommunityRequest, action_by: str, status: str):
+    admins = db.query(models.User).join(models.RoleAssignment).filter(
+        models.RoleAssignment.role.in_(["SUPER_ADMIN", "MANAGER", "MODERATOR"]),
+        models.User.telegram_id.isnot(None)
+    ).all()
+    
+    text = (
+        f"📢 *Community Request Updated!*\n\n"
+        f"📍 *Proposed Name*: {req.name} ({req.level.title()})\n"
+        f"👤 *Requester*: @{req.user.username or req.user.telegram_id}\n"
+        f"⚡ *Status*: {status}\n"
+        f"👮 *Action By*: {action_by}\n"
+    )
+    for admin in admins:
+        try:
+            await send_message(admin.telegram_id, text)
+        except Exception as e:
+            safe_print(f"Error notifying admin {admin.telegram_id}: {e}")
+
 
 
 async def handle_telegram_update(update: dict, db: Session):
@@ -160,25 +229,26 @@ async def handle_telegram_update(update: dict, db: Session):
         await send_message(chat_id, "❌ Your account is banned from using this service.")
         return
 
-    # Log the Telegram group chat message to chats.db
-    chat_type = message.get("chat", {}).get("type", "private")
-    if chat_type in ["group", "supergroup"] and text:
-        from backend.database_chats import SessionLocalChats, ChatMessage
-        chats_db = SessionLocalChats()
-        try:
-            msg_log = ChatMessage(
-                platform="TELEGRAM",
-                chat_id=chat_id,
-                user_id=telegram_id,
-                username=username or f"TG_{telegram_id}",
-                message_text=text
-            )
-            chats_db.add(msg_log)
-            chats_db.commit()
-        except Exception as e:
-            safe_print(f"Error logging Telegram message: {e}")
-        finally:
-            chats_db.close()
+    # Log the Telegram message to chats.db (both private and group/supergroup chats)
+    if text:
+        is_callback = any(text.startswith(prefix) for prefix in ["node_", "verify_", "add_", "browse_", "/"]) or text.lower().strip() == "start"
+        if not is_callback:
+            from backend.database_chats import SessionLocalChats, ChatMessage
+            chats_db = SessionLocalChats()
+            try:
+                msg_log = ChatMessage(
+                    platform="TELEGRAM",
+                    chat_id=chat_id,
+                    user_id=telegram_id,
+                    username=username or f"TG_{telegram_id}",
+                    message_text=text
+                )
+                chats_db.add(msg_log)
+                chats_db.commit()
+            except Exception as e:
+                safe_print(f"Error logging Telegram message: {e}")
+            finally:
+                chats_db.close()
 
     # Check for location attachment
     if "location" in message:
@@ -298,10 +368,22 @@ async def handle_telegram_update(update: dict, db: Session):
             tg_chat_id = f"tg_chat_{normalized_node_name.lower().replace(' ', '_')}"
             wa_chat_id = f"wa_chat_{normalized_node_name.lower().replace(' ', '_')}"
             
-            tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
-            wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
-            db.add(tg_group)
-            db.add(wa_group)
+            existing_tg = db.query(models.GroupChat).filter(
+                models.GroupChat.location_id == new_node.id,
+                models.GroupChat.platform == "TELEGRAM"
+            ).first()
+            if not existing_tg:
+                tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
+                db.add(tg_group)
+
+            existing_wa = db.query(models.GroupChat).filter(
+                models.GroupChat.location_id == new_node.id,
+                models.GroupChat.platform == "WHATSAPP"
+            ).first()
+            if not existing_wa:
+                wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
+                db.add(wa_group)
+                
             db.commit()
 
             # Clear state and show keyboard for new node
@@ -337,7 +419,12 @@ async def handle_telegram_update(update: dict, db: Session):
                 }
                 await send_message(
                     chat_id,
-                    f"🏢 *Residency Verification Needed:*\nTo request the creation of the building *{node_name}*, please upload a photo of your utility bill, lease agreement, or ID showing residency. Type /cancel to abort."
+                    f"🏢 *Residency Verification Needed:*\nTo request the creation of the building *{node_name}*, please upload a photo of your utility bill, lease agreement, or ID showing residency. Type /cancel to abort.",
+                    reply_markup={
+                        "inline_keyboard": [
+                            [{"text": "ℹ️ How to Upload Proof / Complete KYC", "callback_data": "kyc_info"}]
+                        ]
+                    }
                 )
                 return
             
@@ -351,6 +438,8 @@ async def handle_telegram_update(update: dict, db: Session):
             )
             db.add(comm_req)
             db.commit()
+            db.refresh(comm_req)
+            await notify_admins_new_request(db, comm_req)
             
             USER_STATES[telegram_id] = {}
             await send_message(
@@ -385,6 +474,8 @@ async def handle_telegram_update(update: dict, db: Session):
             )
             db.add(comm_req)
             db.commit()
+            db.refresh(comm_req)
+            await notify_admins_new_request(db, comm_req)
             
             USER_STATES[telegram_id] = {}
             await send_message(
@@ -393,7 +484,15 @@ async def handle_telegram_update(update: dict, db: Session):
             )
             return
         else:
-            await send_message(chat_id, "⚠️ Please upload an image or document proof. Or type /cancel to abort.")
+            await send_message(
+                chat_id,
+                "⚠️ Please upload an image or document proof. Or type /cancel to abort.",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "ℹ️ How to Upload Proof / Complete KYC", "callback_data": "kyc_info"}]
+                    ]
+                }
+            )
             return
 
     # Action: Awaiting residency proof for building creation on a missing path request
@@ -409,12 +508,21 @@ async def handle_telegram_update(update: dict, db: Session):
 
         if document_url:
             pending_path = state.get("pending_path")
+            custom_city_group = state.get("custom_city_group")
             await create_community_requests_for_path(
-                db, user, telegram_id, chat_id, pending_path, limit_to_street=False, proof_url=document_url
+                db, user, telegram_id, chat_id, pending_path, limit_to_street=False, proof_url=document_url, custom_city_group=custom_city_group
             )
             return
         else:
-            await send_message(chat_id, "⚠️ Please upload an image or document proof. Or type /cancel to abort.")
+            await send_message(
+                chat_id,
+                "⚠️ Please upload an image or document proof. Or type /cancel to abort.",
+                reply_markup={
+                    "inline_keyboard": [
+                        [{"text": "ℹ️ How to Upload Proof / Complete KYC", "callback_data": "kyc_info"}]
+                    ]
+                }
+            )
             return
 
 
@@ -535,7 +643,37 @@ async def show_location_node(chat_id: str, node_id: int, db: Session, message_id
             keyboard.append([{"text": f"➕ Add {c_title} here", "callback_data": f"add_{node.id}"}])
 
     if node.level == "BUILDING":
-        keyboard.append([{"text": "🔑 Request Entry (Verify)", "callback_data": f"verify_{node.id}"}])
+        status = "NONE"
+        if user:
+            verification = db.query(models.Verification).filter(
+                models.Verification.user_id == user.id,
+                models.Verification.building_id == node.id
+            ).first()
+            if verification:
+                status = verification.status
+        
+        # Check if user is already a member of the group
+        is_member = False
+        if user and user.telegram_id:
+            for g in groups:
+                if g.platform == "TELEGRAM":
+                    if await is_user_in_telegram_group(g.chat_id, user.telegram_id):
+                        is_member = True
+                        break
+        
+        is_access_granted = (status == "APPROVED" or is_member)
+        
+        for g in groups:
+            if is_access_granted:
+                keyboard.append([{"text": f"💬 Join {g.platform.title()} Group", "url": g.invite_link}])
+            else:
+                keyboard.append([{"text": f"🔒 Join {g.platform.title()} Group", "callback_data": f"join_locked_{g.id}"}])
+                
+        if not is_access_granted:
+            if status == "NONE" or status == "REJECTED":
+                keyboard.append([{"text": "🔑 Request Entry (Verify)", "callback_data": f"verify_{node.id}"}])
+            elif status == "PENDING":
+                keyboard.append([{"text": "⏳ Verification Pending Admin Approval", "callback_data": "verif_pending_info"}])
 
     nav_row = []
     if node.parent_id:
@@ -613,7 +751,29 @@ async def show_location_node(chat_id: str, node_id: int, db: Session, message_id
     if groups:
         text_info += "*Chats available:*\n"
         for g in groups:
-            text_info += f"- [{g.platform.title()} {g.type.title()} Chat]({g.invite_link})\n"
+            if node.level == "BUILDING":
+                status = "NONE"
+                if user:
+                    verification = db.query(models.Verification).filter(
+                        models.Verification.user_id == user.id,
+                        models.Verification.building_id == node.id
+                    ).first()
+                    if verification:
+                        status = verification.status
+                
+                is_member = False
+                if user and user.telegram_id and g.platform == "TELEGRAM":
+                    if await is_user_in_telegram_group(g.chat_id, user.telegram_id):
+                        is_member = True
+                
+                is_access_granted = (status == "APPROVED" or is_member)
+                
+                if is_access_granted:
+                    text_info += f"- [{g.platform.title()} Group (Approved)]({g.invite_link})\n"
+                else:
+                    text_info += f"- {g.platform.title()} Group (🔒 Locked - Verification Required)\n"
+            else:
+                text_info += f"- [{g.platform.title()} {g.type.title()} Chat]({g.invite_link})\n"
     else:
         text_info += "No active groups for this level."
 
@@ -654,6 +814,35 @@ async def handle_callback_query(callback: dict, db: Session):
 
     if data == "browse_root":
         await show_root_locations(chat_id, db, message_id=message_id)
+        return
+
+    if data == "kyc_info":
+        await send_message(
+            chat_id,
+            "📎 *How to upload proof:*\n\n"
+            "1. Click the attachment icon (paperclip 📎) next to the message input field.\n"
+            "2. Select a Photo or Document of your utility bill, lease agreement, or ID.\n"
+            "3. Send it directly to this chat.\n\n"
+            "Once received, the bot will submit it for admin verification."
+        )
+        return
+
+    if data.startswith("join_locked_"):
+        await send_message(
+            chat_id,
+            "🔒 *Group Locked:*\n\n"
+            "This is a private residency group. To obtain the invite link, you must verify your residency first.\n\n"
+            "Please click the *'🔑 Request Entry (Verify)'* button below the location to submit your residency proof."
+        )
+        return
+
+    if data == "verif_pending_info":
+        await send_message(
+            chat_id,
+            "⏳ *Verification Pending:*\n\n"
+            "Your residency proof has been submitted and is currently being reviewed by neighborhood managers.\n"
+            "Once approved, the join button will unlock, and you will receive a notification."
+        )
         return
 
     if data.startswith("node_"):
@@ -823,7 +1012,8 @@ async def handle_callback_query(callback: dict, db: Session):
         if not pending_path:
             await send_message(chat_id, "❌ No pending location search found. Please send your location again.")
             return
-        await create_community_requests_for_path(db, user, telegram_id, chat_id, pending_path, limit_to_street=True)
+        custom_city_group = state.get("custom_city_group")
+        await create_community_requests_for_path(db, user, telegram_id, chat_id, pending_path, limit_to_street=True, custom_city_group=custom_city_group)
         return
 
     # -----------------------------------------------------------------
@@ -845,6 +1035,26 @@ async def handle_callback_query(callback: dict, db: Session):
             "invite_link": selected_sugg["invite_link"]
         }
         
+        state["custom_city_group"] = custom_city_group
+        USER_STATES[telegram_id] = state
+
+        if "BUILDING" in state.get("missing_levels", []):
+            await send_message(
+                chat_id,
+                "🏢 *Building Request Options:*\n"
+                "Creating a building node requires proof of residency (e.g., utility bill, lease agreement).\n"
+                "How would you like to proceed?",
+                reply_markup={
+                    "inline_keyboard": [
+                        [
+                            {"text": "🏢 Request with Building (Requires Proof)", "callback_data": "req_missing_with_building"},
+                            {"text": "🛣️ Request up to Street (No Proof)", "callback_data": "req_missing_up_to_street"}
+                        ]
+                    ]
+                }
+            )
+            return
+            
         # Proceed with creation linking the selected public group
         await create_community_requests_for_path(
             db, user, telegram_id, chat_id, pending_path, limit_to_street=False, custom_city_group=custom_city_group
@@ -858,6 +1068,23 @@ async def handle_callback_query(callback: dict, db: Session):
             await send_message(chat_id, "❌ Session expired. Please search for the location again.")
             return
             
+        if "BUILDING" in state.get("missing_levels", []):
+            await send_message(
+                chat_id,
+                "🏢 *Building Request Options:*\n"
+                "Creating a building node requires proof of residency (e.g., utility bill, lease agreement).\n"
+                "How would you like to proceed?",
+                reply_markup={
+                    "inline_keyboard": [
+                        [
+                            {"text": "🏢 Request with Building (Requires Proof)", "callback_data": "req_missing_with_building"},
+                            {"text": "🛣️ Request up to Street (No Proof)", "callback_data": "req_missing_up_to_street"}
+                        ]
+                    ]
+                }
+            )
+            return
+
         # Proceed to create a new group
         await create_community_requests_for_path(
             db, user, telegram_id, chat_id, pending_path, limit_to_street=False
@@ -932,6 +1159,15 @@ async def handle_callback_query(callback: dict, db: Session):
             models.GroupChat.location_id == pv.building_id,
             models.GroupChat.type == "PRIVATE"
         ).all()
+        
+        # Approve join request using userbot
+        if pv.user.telegram_id:
+            from backend.services.telegram_userbot import approve_telegram_group_join
+            import asyncio
+            for g in groups:
+                if g.platform == "TELEGRAM":
+                    asyncio.create_task(approve_telegram_group_join(g.chat_id, pv.user.telegram_id))
+                    
         links_text = "\n".join([f"- [{g.platform.title()} Group]({g.invite_link})" for g in groups])
         user_msg = (
             f"🎉 *Good news!*\nYour residency verification for *{pv.building.name}* has been approved by the administrators!\n\n"
@@ -1035,37 +1271,16 @@ async def handle_callback_query(callback: dict, db: Session):
         selected_sugg = suggestions[sugg_idx]
         
         # Approve request and link to selected suggestion
-        pr.status = "APPROVED"
-        
-        # Create Node
-        new_node = models.LocationNode(name=pr.name, level=pr.level, parent_id=pr.parent_id, created_by_id=pr.user_id)
-        db.add(new_node)
-        db.commit()
-        db.refresh(new_node)
-        
-        # Create Group Chats linking the selected group
-        gtype = "PRIVATE" if new_node.level == "BUILDING" else "PUBLIC"
-        tg_group = models.GroupChat(
-            location_id=new_node.id, platform="TELEGRAM", chat_id=selected_sugg["chat_id"], type=gtype, invite_link=selected_sugg["invite_link"]
+        from backend.services.location import approve_request_and_hierarchy
+        await approve_request_and_hierarchy(
+            db=db,
+            req=pr,
+            custom_group_chat_id=selected_sugg["chat_id"],
+            custom_group_invite_link=selected_sugg["invite_link"],
+            action_by=f"@{user.username or user.telegram_id}",
+            telegram_chat_id=chat_id,
+            telegram_message_id=message_id
         )
-        wa_chat_id = f"wa_chat_{new_node.name.lower().replace(' ', '_')}"
-        wa_group = models.GroupChat(
-            location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
-        )
-        db.add(tg_group)
-        db.add(wa_group)
-        db.commit()
-        
-        # Notify user
-        msg = (
-            f"🎉 *Good news!*\nYour request to create the community *{pr.name}* ({pr.level.title()}) has been approved!\n\n"
-            f"You can join the linked group here:\n"
-            f"👉 [Telegram Chat]({selected_sugg['invite_link']})"
-        )
-        await send_message(pr.user.telegram_id, msg)
-        
-        keyboard = [[{"text": "⬅️ Back to Requests", "callback_data": "admin_req_list"}]]
-        await edit_message(chat_id, message_id, f"✅ Linked and approved *{pr.name}* to existing group *{selected_sugg['title']}*.", reply_markup={"inline_keyboard": keyboard})
         return
 
     if data.startswith("admin_req_new_"):
@@ -1075,133 +1290,14 @@ async def handle_callback_query(callback: dict, db: Session):
             await send_message(chat_id, "❌ Request not found.")
             return
             
-        pr.status = "APPROVED"
-        
-        # Create Node
-        new_node = models.LocationNode(name=pr.name, level=pr.level, parent_id=pr.parent_id, created_by_id=pr.user_id)
-        radius_map = {"CITY": 2000.0, "NEIGHBORHOOD": 800.0, "STREET": 250.0, "BUILDING": 50.0}
-        if pr.level in radius_map:
-            new_node.radius = radius_map[pr.level]
-        db.add(new_node)
-        db.commit()
-        db.refresh(new_node)
-        
-        # Geocode coordinates live
-        from backend.services.location import geocode_node_coordinates_live, get_city_name_for_node, get_country_flag
-        lat, lon = await geocode_node_coordinates_live(db, new_node)
-        if lat is not None and lon is not None:
-            new_node.latitude = lat
-            new_node.longitude = lon
-            db.commit()
-            
-        # Format group title & description
-        city_name = get_city_name_for_node(db, new_node)
-        group_title = None
-        description = None
-        
-        if new_node.level == "COUNTRY":
-            group_title = f"{new_node.name} {get_country_flag(new_node.name)}"
-            description = f"Welcome to the official community group for {new_node.name}."
-        elif new_node.level == "CITY":
-            group_title = f"🇮🇱 Localis | {new_node.name}"
-            description = (
-                f"ברוכים הבאים לקהילת העיר {new_node.name}.\n\n"
-                f"הקבוצה מיועדת לכל תושבי העיר ומאפשרת לשתף מידע, המלצות, אירועים, עדכונים חשובים, דיונים קהילתיים ועזרה הדדית בין תושבי העיר.\n\n"
-                f"📍 אזור: {new_node.name}\n"
-                f"👥 קהל יעד: כלל תושבי העיר\n"
-                f"🔗 לקבוצות שכונתיות ומקומיות השתמשו בבוט Localis."
-            )
-        elif new_node.level == "NEIGHBORHOOD":
-            c_name = city_name or "העיר"
-            group_title = f"🏘️ Localis | {c_name} | {new_node.name}"
-            description = (
-                f"ברוכים הבאים לקהילת שכונת {new_node.name}.\n\n"
-                f"מקום לתושבי השכונה לשתף מידע מקומי, המלצות, אירועים, אבדות ומציאות, עדכוני תנועה, התארגנויות שכונתיות ועזרה הדדית.\n\n"
-                f"📍 עיר: {c_name}\n"
-                f"📍 שכונה: {new_node.name}\n"
-                f"👥 קהל יעד: תושבי השכונה והסביבה"
-            )
-        elif new_node.level == "STREET":
-            c_name = city_name or "העיר"
-            neighborhood_name = ""
-            curr = new_node.parent
-            while curr:
-                if curr.level == "NEIGHBORHOOD":
-                    neighborhood_name = curr.name
-                    break
-                curr = curr.parent
-            n_part = f" | {neighborhood_name}" if neighborhood_name else ""
-            n_desc = f"📍 שכונה: {neighborhood_name}\n" if neighborhood_name else ""
-            group_title = f"🏠 Localis | {c_name}{n_part} | רחוב {new_node.name}"
-            description = (
-                f"ברוכים הבאים לקהילת רחוב {new_node.name}.\n\n"
-                f"הקבוצה מיועדת לתושבי הרחוב ומטרתה לשפר את התקשורת בין השכנים, לשתף מידע רלוונטי, לדווח על תקלות, לעזור אחד לשני ולחזק את הקהילה המקומית.\n\n"
-                f"📍 עיר: {c_name}\n"
-                f"{n_desc}"
-                f"📍 רחוב: {new_node.name}\n"
-                f"👥 קהל יעד: תושבי הרחוב"
-            )
-        elif new_node.level == "BUILDING":
-            c_name = city_name or "העיר"
-            neighborhood_name = ""
-            curr = new_node.parent
-            while curr:
-                if curr.level == "NEIGHBORHOOD":
-                    neighborhood_name = curr.name
-                    break
-                curr = curr.parent
-            n_part = f" | {neighborhood_name}" if neighborhood_name else ""
-            n_desc = f"📍 שכונה: {neighborhood_name}\n" if neighborhood_name else ""
-            group_title = f"🔒 Localis | {c_name}{n_part} | רחוב {new_node.name}"
-            description = (
-                f"ברוכים הבאים לקהילת דיירי הבניין.\n\n"
-                f"זוהי קבוצה פרטית המיועדת לדיירים המאומתים של הבניין בלבד.\n\n"
-                f"בקבוצה ניתן לדון בנושאי ועד בית, תחזוקה, חניה, אבטחה, משלוחים, התראות חשובות וכל נושא הקשור לחיי היומיום בבניין.\n\n"
-                f"📍 עיר: {c_name}\n"
-                f"{n_desc}"
-                f"📍 כתובת: רחוב {new_node.name}\n\n"
-                f"🔒 הכניסה לקבוצה מחייבת אימות דייר.\n"
-                f"🔒 רק דיירים מאומתים יכולים להישאר חברים בקבוצה.\n"
-                f"🔒 אימות תקופתי עשוי להתבצע לצורך שמירה על פרטיות וביטחון הדיירים.\n\n"
-                f"🤝 קהילה חזקה מתחילה מהבניין שבו אתם גרים."
-            )
-            
-        coords_dict = {"latitude": new_node.latitude, "longitude": new_node.longitude, "radius": new_node.radius}
-        
-        # Get country name
-        country_name = None
-        curr = new_node
-        while curr:
-            if curr.level == "COUNTRY":
-                country_name = curr.name
-                break
-            curr = curr.parent
-            
-        # Create brand new groups
-        from backend.services.telegram_userbot import create_telegram_group
-        tg_info = await create_telegram_group(new_node.name, new_node.level, node_id=new_node.id, group_title=group_title, description=description, coords=coords_dict, country_name=country_name)
-        gtype = "PRIVATE" if new_node.level == "BUILDING" else "PUBLIC"
-        tg_group = models.GroupChat(
-            location_id=new_node.id, platform="TELEGRAM", chat_id=tg_info["chat_id"], type=gtype, invite_link=tg_info["invite_link"]
+        from backend.services.location import approve_request_and_hierarchy
+        await approve_request_and_hierarchy(
+            db=db,
+            req=pr,
+            action_by=f"@{user.username or user.telegram_id}",
+            telegram_chat_id=chat_id,
+            telegram_message_id=message_id
         )
-        wa_chat_id = f"wa_chat_{new_node.name.lower().replace(' ', '_')}"
-        wa_group = models.GroupChat(
-            location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
-        )
-        db.add(tg_group)
-        db.add(wa_group)
-        db.commit()
-        
-        # Notify user
-        msg = (
-            f"🎉 *Good news!*\nYour request to create the community *{pr.name}* ({pr.level.title()}) has been approved!\n\n"
-            f"You can join the new group here:\n"
-            f"👉 [Telegram Chat]({tg_info['invite_link']})"
-        )
-        await send_message(pr.user.telegram_id, msg)
-        
-        keyboard = [[{"text": "⬅️ Back to Requests", "callback_data": "admin_req_list"}]]
-        await edit_message(chat_id, message_id, f"✅ Created new group and approved *{pr.name}*.", reply_markup={"inline_keyboard": keyboard})
         return
 
     if data.startswith("admin_req_rej_"):
@@ -1217,6 +1313,7 @@ async def handle_callback_query(callback: dict, db: Session):
         # Notify user
         msg = f"❌ Your request to create *{pr.name}* ({pr.level.title()}) was rejected by the administrators."
         await send_message(pr.user.telegram_id, msg)
+        await notify_admins_request_update(db, pr, f"@{user.username or user.telegram_id}", pr.status)
         
         keyboard = [[{"text": "⬅️ Back to Requests", "callback_data": "admin_req_list"}]]
         await edit_message(chat_id, message_id, f"❌ Rejected creation request for *{pr.name}*.", reply_markup={"inline_keyboard": keyboard})
@@ -1519,24 +1616,43 @@ async def create_community_requests_for_path(
                     from backend.services.telegram_userbot import create_telegram_group
                     tg_info = await create_telegram_group(node.name, node.level, node_id=node.id, group_title=group_title, description=description, coords=coords_dict, country_name=pending_path[0] if pending_path else None)
                 gtype = "PRIVATE" if level == "BUILDING" else "PUBLIC"
-                tg_group = models.GroupChat(
-                    location_id=node.id,
-                    platform="TELEGRAM",
-                    chat_id=tg_info["chat_id"],
-                    type=gtype,
-                    invite_link=tg_info["invite_link"]
-                )
-                db.add(tg_group)
+                
+                existing_tg = db.query(models.GroupChat).filter(
+                    models.GroupChat.location_id == node.id,
+                    models.GroupChat.platform == "TELEGRAM"
+                ).first()
+                if existing_tg:
+                    existing_tg.chat_id = tg_info["chat_id"]
+                    existing_tg.invite_link = tg_info["invite_link"]
+                    existing_tg.type = gtype
+                else:
+                    tg_group = models.GroupChat(
+                        location_id=node.id,
+                        platform="TELEGRAM",
+                        chat_id=tg_info["chat_id"],
+                        type=gtype,
+                        invite_link=tg_info["invite_link"]
+                    )
+                    db.add(tg_group)
                 
                 wa_chat_id = f"wa_chat_{node.name.lower().replace(' ', '_')}"
-                wa_group = models.GroupChat(
-                    location_id=node.id,
-                    platform="WHATSAPP",
-                    chat_id=wa_chat_id,
-                    type=gtype,
-                    invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
-                )
-                db.add(wa_group)
+                existing_wa = db.query(models.GroupChat).filter(
+                    models.GroupChat.location_id == node.id,
+                    models.GroupChat.platform == "WHATSAPP"
+                ).first()
+                if existing_wa:
+                    existing_wa.chat_id = wa_chat_id
+                    existing_wa.invite_link = f"https://chat.whatsapp.com/{wa_chat_id}"
+                    existing_wa.type = gtype
+                else:
+                    wa_group = models.GroupChat(
+                        location_id=node.id,
+                        platform="WHATSAPP",
+                        chat_id=wa_chat_id,
+                        type=gtype,
+                        invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
+                    )
+                    db.add(wa_group)
                 db.commit()
                 
                 parent_id = node.id
@@ -1555,6 +1671,7 @@ async def create_community_requests_for_path(
                 db.add(comm_req)
                 db.commit()
                 db.refresh(comm_req)
+                await notify_admins_new_request(db, comm_req)
                 
                 last_request_id = comm_req.id
                 parent_id = None

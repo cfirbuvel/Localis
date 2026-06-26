@@ -42,6 +42,10 @@ async def create_telegram_group(node_name: str, level: str, node_id: int = None,
             "invite_link": f"https://t.me/joinchat/{mock_id}"
         }
 
+    import asyncio
+    logger.info("Sleeping 3 seconds before Telegram group creation to prevent rate limits...")
+    await asyncio.sleep(3.0)
+
     try:
         # Initialize client with StringSession
         client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
@@ -135,21 +139,54 @@ async def create_telegram_group(node_name: str, level: str, node_id: int = None,
         # Update username to make it public if not BUILDING and node_id is provided
         username = f"localis_{level.lower()}_{node_id}" if node_id and level != "BUILDING" else None
         invite_link = None
+        chat_id = f"-100{channel_id}"
 
         if username:
             try:
                 from telethon.tl.functions.channels import UpdateUsernameRequest
                 await client(UpdateUsernameRequest(channel=channel, username=username))
                 invite_link = f"https://t.me/{username}"
-                chat_id = f"@{username}"
             except Exception as ue:
                 logger.error(f"Failed to assign public username @{username} to channel: {ue}")
 
         if not invite_link:
             # Fallback to private invite link if not public or username assignment failed
-            invite = await client(ExportChatInviteRequest(peer=channel))
+            request_needed = True if level == "BUILDING" else None
+            invite = await client(ExportChatInviteRequest(peer=channel, request_needed=request_needed))
             invite_link = invite.link
-            chat_id = f"-100{channel_id}"
+
+        # Add the Telegram Bot to the group and promote to admin
+        bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+        if bot_token and ":" in bot_token:
+            try:
+                bot_id = int(bot_token.split(":")[0])
+                from telethon.tl.functions.channels import InviteToChannelRequest, EditAdminRequest
+                from telethon.tl.types import ChatAdminRights
+                
+                # Invite the bot
+                await client(InviteToChannelRequest(channel=channel, users=[bot_id]))
+                logger.info(f"Invited bot {bot_id} to group {channel_id}")
+                
+                # Promote the bot to admin so it can read messages bypassing privacy mode
+                await client(EditAdminRequest(
+                    channel=channel,
+                    user_id=bot_id,
+                    admin_rights=ChatAdminRights(
+                        change_info=True,
+                        post_messages=True,
+                        edit_messages=True,
+                        delete_messages=True,
+                        ban_users=True,
+                        invite_users=True,
+                        pin_messages=True,
+                        add_admins=False,
+                        manage_call=True
+                    ),
+                    rank="Bot Admin"
+                ))
+                logger.info(f"Promoted bot {bot_id} to admin in group {channel_id}")
+            except Exception as e:
+                logger.error(f"Failed to add/promote Telegram Bot in group: {e}")
 
         await client.disconnect()
         return {
@@ -427,3 +464,103 @@ async def search_public_groups(query: str) -> list:
     if is_userbot_configured:
         return suggestions
     return mock_suggestions
+
+async def approve_telegram_group_join(chat_id: str, user_telegram_id: str) -> bool:
+    """
+    Approves a pending join request for a user in a Telegram group/channel.
+    """
+    api_id = os.getenv("TELEGRAM_API_ID")
+    api_hash = os.getenv("TELEGRAM_API_HASH")
+    session_string = os.getenv("TELEGRAM_SESSION_STRING")
+
+    if not TELETHON_AVAILABLE or not api_id or not api_hash or not session_string:
+        logger.warning("Telethon userbot is not configured, skipping live approval.")
+        return False
+
+    try:
+        # Initialize client
+        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            logger.error("Telegram Userbot is not authorized.")
+            await client.disconnect()
+            return False
+
+        # Resolve peer and user
+        peer_id = chat_id
+        if isinstance(chat_id, str):
+            if chat_id.startswith("-") or chat_id.isdigit():
+                peer_id = int(chat_id)
+        channel = await client.get_entity(peer_id)
+        user = await client.get_entity(int(user_telegram_id))
+
+        # Approve join request
+        from telethon.tl.functions.messages import HideChatJoinRequestRequest
+        await client(HideChatJoinRequestRequest(
+            peer=channel,
+            user_id=user,
+            approved=True
+        ))
+        await client.disconnect()
+        logger.info(f"Successfully approved Telegram group join request for user {user_telegram_id} in {chat_id}")
+        return True
+    except Exception as e:
+        logger.exception(f"Error approving chat join request for user {user_telegram_id} in {chat_id}: {e}")
+        return False
+
+
+async def fetch_group_messages_via_userbot(chat_id: str, limit: int = 50) -> list:
+    """
+    Fetches the latest messages from a Telegram group using the Userbot client.
+    """
+    api_id = os.getenv("TELEGRAM_API_ID")
+    api_hash = os.getenv("TELEGRAM_API_HASH")
+    session_string = os.getenv("TELEGRAM_SESSION_STRING")
+
+    if not TELETHON_AVAILABLE or not api_id or not api_hash or not session_string:
+        logger.warning("Telethon userbot is not configured, skipping live messages fetch.")
+        return []
+
+    try:
+        peer_id = chat_id
+        if isinstance(chat_id, str):
+            if chat_id.startswith("-") or chat_id.isdigit():
+                peer_id = int(chat_id)
+                
+        client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
+        await client.connect()
+        
+        if not await client.is_user_authorized():
+            logger.error("Telegram Userbot is not authorized.")
+            await client.disconnect()
+            return []
+
+        # Fetch messages
+        messages = await client.get_messages(peer_id, limit=limit)
+        results = []
+        for m in messages:
+            if m.text:  # Only text messages
+                sender = m.sender
+                sender_id = str(m.sender_id) if m.sender_id else ""
+                username = getattr(sender, "username", None)
+                if not username and sender:
+                    first_name = getattr(sender, "first_name", "")
+                    last_name = getattr(sender, "last_name", "")
+                    username = f"{first_name} {last_name}".strip() or f"User_{sender_id}"
+                
+                results.append({
+                    "platform": "TELEGRAM",
+                    "chat_id": chat_id,
+                    "user_id": sender_id,
+                    "username": username or f"TG_{sender_id}",
+                    "message_text": m.text,
+                    "timestamp": m.date
+                })
+        await client.disconnect()
+        return results
+    except Exception as e:
+        logger.exception(f"Error fetching messages via userbot for {chat_id}: {e}")
+        return []
+
+
