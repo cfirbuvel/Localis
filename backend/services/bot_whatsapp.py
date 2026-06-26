@@ -253,10 +253,21 @@ async def process_wa_message(from_num: str, text: str, media_id: Optional[str], 
             tg_chat_id = f"tg_chat_{node_name.lower().replace(' ', '_')}"
             wa_chat_id = f"wa_chat_{node_name.lower().replace(' ', '_')}"
             
-            tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
-            wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
-            db.add(tg_group)
-            db.add(wa_group)
+            existing_tg = db.query(models.GroupChat).filter(
+                models.GroupChat.location_id == new_node.id,
+                models.GroupChat.platform == "TELEGRAM"
+            ).first()
+            if not existing_tg:
+                tg_group = models.GroupChat(location_id=new_node.id, platform="TELEGRAM", chat_id=tg_chat_id, type=gtype, invite_link=f"https://t.me/joinchat/{tg_chat_id}")
+                db.add(tg_group)
+
+            existing_wa = db.query(models.GroupChat).filter(
+                models.GroupChat.location_id == new_node.id,
+                models.GroupChat.platform == "WHATSAPP"
+            ).first()
+            if not existing_wa:
+                wa_group = models.GroupChat(location_id=new_node.id, platform="WHATSAPP", chat_id=wa_chat_id, type=gtype, invite_link=f"https://chat.whatsapp.com/{wa_chat_id}")
+                db.add(wa_group)
             db.commit()
 
             USER_STATES_WA[from_num] = {}
