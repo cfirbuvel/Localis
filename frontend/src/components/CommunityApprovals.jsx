@@ -5,6 +5,7 @@ export default function CommunityApprovals() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [selectedProof, setSelectedProof] = useState(null);
+  const [loading, setLoading] = useState(false);
   
   // Existing City Group Search state
   const [activeSearchReq, setActiveSearchReq] = useState(null);
@@ -33,11 +34,14 @@ export default function CommunityApprovals() {
 
   useEffect(() => {
     fetchRequests();
+    const interval = setInterval(fetchRequests, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleReview = async (id, status) => {
     setError('');
     setSuccess('');
+    setLoading(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`http://localhost:8000/api/community-requests/${id}/review`, {
@@ -58,6 +62,8 @@ export default function CommunityApprovals() {
     } catch (err) {
       console.error(err);
       setError('Connection error.');
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -90,6 +96,7 @@ export default function CommunityApprovals() {
   const handleReviewWithCustomGroup = async (id, customChatId, customInviteLink) => {
     setError('');
     setSuccess('');
+    setLoading(true);
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`http://localhost:8000/api/community-requests/${id}/review`, {
@@ -114,11 +121,13 @@ export default function CommunityApprovals() {
     } catch (err) {
       console.error(err);
       setError('Connection error.');
+    } finally {
+      setLoading(false);
     }
   };
 
   return (
-    <div className="glass-panel" style={{ padding: '24px' }}>
+    <div className="glass-panel" style={{ padding: '24px', position: 'relative' }}>
       <div className="panel-header" style={{ marginBottom: '20px' }}>
         <h2 style={{ fontSize: '1.4rem', fontWeight: 700 }}>👥 Community Creation Approvals</h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
@@ -128,6 +137,40 @@ export default function CommunityApprovals() {
 
       {error && <div className="alert alert-danger" style={{ marginBottom: '15px' }}>{error}</div>}
       {success && <div className="alert alert-success" style={{ marginBottom: '15px' }}>{success}</div>}
+
+      {loading && (
+        <div style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(13, 17, 23, 0.7)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 10000,
+          borderRadius: '16px'
+        }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            border: '4px solid rgba(255, 255, 255, 0.1)',
+            borderTop: '4px solid #8b5cf6',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            marginBottom: '16px'
+          }}></div>
+          <div style={{ fontWeight: 600, color: 'white', fontSize: '1rem' }}>
+            Processing Request & Creating Groups...
+          </div>
+          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginTop: '8px' }}>
+            Please wait, this might take a few seconds to prevent rate limits.
+          </div>
+        </div>
+      )}
 
       {requests.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-secondary)' }}>
@@ -178,13 +221,22 @@ export default function CommunityApprovals() {
                       className="btn btn-secondary"
                       style={{ marginRight: '8px', padding: '6px 12px', fontSize: '0.8rem', background: 'var(--danger)', border: 'none' }}
                       onClick={() => handleReview(req.id, 'REJECTED')}
+                      disabled={loading}
                     >
                       Reject
                     </button>
                     <button
                       className="btn btn-primary"
-                      style={{ padding: '6px 12px', fontSize: '0.8rem', border: 'none' }}
+                      style={{ 
+                        padding: '6px 12px', 
+                        fontSize: '0.8rem', 
+                        border: 'none',
+                        opacity: (loading || (req.level === 'BUILDING' && !req.proof_url)) ? 0.5 : 1,
+                        cursor: (loading || (req.level === 'BUILDING' && !req.proof_url)) ? 'not-allowed' : 'pointer'
+                      }}
+                      disabled={loading || (req.level === 'BUILDING' && !req.proof_url)}
                       onClick={() => handleApproveClick(req)}
+                      title={req.level === 'BUILDING' && !req.proof_url ? "Cannot approve building request without KYC proof" : ""}
                     >
                       Approve & Create
                     </button>

@@ -76,20 +76,25 @@ export default function HierarchyManager() {
   }, [parentId]);
 
   const navigateToNode = (node) => {
+    const nodeLevel = (node.level || '').toUpperCase();
+    const isIsrael = (node.name || '').toLowerCase() === 'israel' || (node.name || '') === 'ישראל';
+
     // Determine next level
     const levelMap = {
-      'COUNTRY': 'CITY',
+      'COUNTRY': isIsrael ? 'DISTRICT' : 'CITY',
+      'DISTRICT': 'CITY',
       'CITY': 'NEIGHBORHOOD',
       'NEIGHBORHOOD': 'STREET',
       'STREET': 'BUILDING',
       'BUILDING': 'DONE'
     };
     
-    if (levelMap[node.level] === 'DONE') return; // Building is final node
+    const nextLevel = levelMap[nodeLevel];
+    if (!nextLevel || nextLevel === 'DONE') return; // Building is final node
 
     setCurrentPath([...currentPath, node]);
     setParentId(node.id);
-    setLevel(levelMap[node.level]);
+    setLevel(nextLevel);
     setShowAddForm(false);
     setNewName('');
   };
@@ -103,8 +108,12 @@ export default function HierarchyManager() {
       const targetNode = currentPath[index];
       const newPath = currentPath.slice(0, index + 1);
       
+      const targetLevel = (targetNode.level || '').toUpperCase();
+      const isIsrael = (targetNode.name || '').toLowerCase() === 'israel' || (targetNode.name || '') === 'ישראל';
+
       const levelMap = {
-        'COUNTRY': 'CITY',
+        'COUNTRY': isIsrael ? 'DISTRICT' : 'CITY',
+        'DISTRICT': 'CITY',
         'CITY': 'NEIGHBORHOOD',
         'NEIGHBORHOOD': 'STREET',
         'STREET': 'BUILDING'
@@ -112,7 +121,7 @@ export default function HierarchyManager() {
       
       setCurrentPath(newPath);
       setParentId(targetNode.id);
-      setLevel(levelMap[targetNode.level]);
+      setLevel(levelMap[targetLevel] || 'COUNTRY');
     }
     setShowAddForm(false);
     setNewName('');
@@ -209,7 +218,7 @@ export default function HierarchyManager() {
                 style={{ padding: '8px 16px', fontSize: '0.85rem' }}
                 onClick={() => setShowAddForm(!showAddForm)}
               >
-                {showAddForm ? 'Cancel' : `➕ Add ${level.toLowerCase().replace('_', ' ')}`}
+                {showAddForm ? 'Cancel' : `➕ Add ${(level || '').toLowerCase().replace('_', ' ')}`}
               </button>
             )}
           </div>
@@ -220,7 +229,7 @@ export default function HierarchyManager() {
               marginBottom: '24px',
               background: 'rgba(2, 6, 23, 0.4)'
             }}>
-              <h4 style={{ marginBottom: '12px', fontSize: '0.95rem' }}>Create New {level.title()}</h4>
+              <h4 style={{ marginBottom: '12px', fontSize: '0.95rem' }}>Create New {(level || '').title()}</h4>
               {error && <div style={{ color: 'var(--danger)', fontSize: '0.85rem', marginBottom: '12px' }}>⚠️ {error}</div>}
               <div className="form-group" style={{ display: 'flex', gap: '12px', marginBottom: 0 }}>
                 <input
@@ -228,7 +237,6 @@ export default function HierarchyManager() {
                   className="form-input"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder={`Enter ${level.toLowerCase()} name...`}
                   required
                 />
                 <button type="submit" className="btn btn-success" style={{ padding: '0 24px' }}>Save</button>
