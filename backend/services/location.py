@@ -205,7 +205,10 @@ async def geocode_node_coordinates_live(db: Session, node: LocationNode) -> tupl
     curr = node
     while curr:
         if curr.level != "DISTRICT":
-            parts.append(curr.name)
+            name = curr.name
+            # Avoid duplicating parent names that are already part of child names (e.g. "Street, Street 5")
+            if not any(name in p for p in parts):
+                parts.append(name)
         curr = curr.parent
     parts.reverse()
     address = ", ".join(parts)
@@ -216,6 +219,14 @@ async def geocode_node_coordinates_live(db: Session, node: LocationNode) -> tupl
             return res["latitude"], res["longitude"]
     except Exception as e:
         print(f"Error geocoding node {node.name}: {e}")
+        
+    # Fallback to parent coordinates
+    curr = node.parent
+    while curr:
+        if curr.latitude is not None and curr.longitude is not None:
+            return curr.latitude, curr.longitude
+        curr = curr.parent
+        
     return None, None
 
 def auto_create_node_path(db: Session, path: List[str]) -> Optional[LocationNode]:
@@ -280,27 +291,315 @@ def auto_create_node_path(db: Session, path: List[str]) -> Optional[LocationNode
             # Auto-create mock groups for the newly created node
             gtype = "PRIVATE" if level == "BUILDING" else "PUBLIC"
             tg_chat_id = f"tg_chat_{name.lower().replace(' ', '_')}"
-            tg_group = GroupChat(
-                location_id=node.id,
-                platform="TELEGRAM",
-                chat_id=tg_chat_id,
-                type=gtype,
-                invite_link=f"https://t.me/joinchat/{tg_chat_id}"
-            )
-            db.add(tg_group)
+            
+            existing_tg = db.query(GroupChat).filter(
+                GroupChat.location_id == node.id,
+                GroupChat.platform == "TELEGRAM"
+            ).first()
+            if not existing_tg:
+                tg_group = GroupChat(
+                    location_id=node.id,
+                    platform="TELEGRAM",
+                    chat_id=tg_chat_id,
+                    type=gtype,
+                    invite_link=f"https://t.me/joinchat/{tg_chat_id}"
+                )
+                db.add(tg_group)
 
             wa_chat_id = f"wa_chat_{name.lower().replace(' ', '_')}"
-            wa_group = GroupChat(
-                location_id=node.id,
-                platform="WHATSAPP",
-                chat_id=wa_chat_id,
-                type=gtype,
-                invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
-            )
-            db.add(wa_group)
+            existing_wa = db.query(GroupChat).filter(
+                GroupChat.location_id == node.id,
+                GroupChat.platform == "WHATSAPP"
+            ).first()
+            if not existing_wa:
+                wa_group = GroupChat(
+                    location_id=node.id,
+                    platform="WHATSAPP",
+                    chat_id=wa_chat_id,
+                    type=gtype,
+                    invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
+                )
+                db.add(wa_group)
             db.commit()
 
         parent_id = node.id
         last_node = node
 
     return last_node
+
+
+async def approve_request_and_hierarchy(
+    db: Session,
+    req,
+    custom_group_chat_id: str = None,
+    custom_group_invite_link: str = None,
+    action_by: str = "Admin",
+    telegram_chat_id: str = None,
+    telegram_message_id: int = None
+):
+    from backend import models
+    from backend.services.telegram_userbot import create_telegram_group
+    from backend.services.bot_telegram import send_message, notify_admins_request_update
+
+    # 1. Collect all pending parent requests upward
+    ancestors = []
+    curr = req
+    while curr.parent_request_id is not None:
+        parent_req = db.query(models.CommunityRequest).filter(
+            models.CommunityRequest.id == curr.parent_request_id,
+            models.CommunityRequest.status == "PENDING"
+        ).first()
+        if not parent_req:
+            break
+        ancestors.append(parent_req)
+        curr = parent_req
+    
+    # Process from top to bottom (ancestors first)
+    pending_chain = list(reversed(ancestors)) + [req]
+
+    last_created_node = None
+
+    for idx, r in enumerate(pending_chain):
+        if telegram_chat_id and telegram_message_id:
+            progress_text = "⚙️ *Processing Hierarchy Approval:*\n\n"
+            for step_idx, item in enumerate(pending_chain):
+                if step_idx < idx:
+                    progress_text += f"🟢 {item.name} ({item.level.title()}) - Created\n"
+                elif step_idx == idx:
+                    progress_text += f"🟡 {item.name} ({item.level.title()}) - Creating...\n"
+                else:
+                    progress_text += f"⚪ {item.name} ({item.level.title()}) - Waiting\n"
+            from backend.services.bot_telegram import edit_message
+            await edit_message(telegram_chat_id, telegram_message_id, progress_text)
+        # Check if already approved (in case of duplicate runs, though here we loop in a transaction)
+        if r.status == "APPROVED":
+            # If already approved, find its node to link the next one
+            node = db.query(models.LocationNode).filter(
+                models.LocationNode.name.ilike(r.name),
+                models.LocationNode.level == r.level,
+                models.LocationNode.parent_id == r.parent_id
+            ).first()
+            if node:
+                last_created_node = node
+            continue
+
+        # If it's a child in the chain, its parent_id should point to the last created node
+        if last_created_node:
+            r.parent_id = last_created_node.id
+            r.parent_request_id = None
+            db.commit()
+
+        # Approve this request
+        r.status = "APPROVED"
+        db.commit()
+
+        # Create Location Node
+        normalized_name = normalize_location_name(r.name, r.level)
+        existing_node = db.query(models.LocationNode).filter(
+            models.LocationNode.name.ilike(normalized_name),
+            models.LocationNode.level == r.level,
+            models.LocationNode.parent_id == r.parent_id
+        ).first()
+
+        if existing_node:
+            new_node = existing_node
+        else:
+            new_node = models.LocationNode(
+                name=normalized_name,
+                level=r.level,
+                parent_id=r.parent_id,
+                created_by_id=r.user_id
+            )
+            db.add(new_node)
+            db.commit()
+            db.refresh(new_node)
+
+        last_created_node = new_node
+
+        # Update child requests waiting for this parent request (if any others exist outside the chain)
+        child_reqs = db.query(models.CommunityRequest).filter(
+            models.CommunityRequest.parent_request_id == r.id
+        ).all()
+        for child in child_reqs:
+            child.parent_id = new_node.id
+            child.parent_request_id = None
+        db.commit()
+
+        # Radius map
+        radius_map = {"CITY": 2000.0, "NEIGHBORHOOD": 800.0, "STREET": 250.0, "BUILDING": 50.0}
+        if new_node.level in radius_map and not new_node.radius:
+            new_node.radius = radius_map[new_node.level]
+            db.commit()
+
+        # Geocode coordinates live
+        if new_node.latitude is None or new_node.longitude is None:
+            lat, lon = await geocode_node_coordinates_live(db, new_node)
+            if lat is not None and lon is not None:
+                new_node.latitude = lat
+                new_node.longitude = lon
+                db.commit()
+
+        # Find country flag & name
+        country_name = None
+        curr_p = new_node
+        while curr_p:
+            if curr_p.level == "COUNTRY":
+                country_name = curr_p.name
+                break
+            curr_p = curr_p.parent
+
+        city_name = get_city_name_for_node(db, new_node)
+        group_title = None
+        description = None
+
+        if new_node.level == "COUNTRY":
+            group_title = f"{new_node.name} {get_country_flag(new_node.name)}"
+            description = f"Welcome to the official community group for {new_node.name}."
+        elif new_node.level == "CITY":
+            group_title = f"🇮🇱 Localis | {new_node.name}"
+            description = (
+                f"ברוכים הבאים לקהילת העיר {new_node.name}.\n\n"
+                f"הקבוצה מיועדת לכל תושבי העיר ומאפשרת לשתף מידע, המלצות, אירועים, עדכונים חשובים, דיונים קהילתיים ועזרה הדדית בין תושבי העיר.\n\n"
+                f"📍 אזור: {new_node.name}\n"
+                f"👥 קהל יעד: כלל תושבי העיר\n"
+                f"🔗 לקבוצות שכונתיות ומקומיות השתמשו בבוט Localis."
+            )
+        elif new_node.level == "NEIGHBORHOOD":
+            c_name = city_name or "העיר"
+            group_title = f"🏘️ Localis | {c_name} | {new_node.name}"
+            description = (
+                f"ברוכים הבאים לקהילת שכונת {new_node.name}.\n\n"
+                f"מקום לתושבי השכונה לשתף מידע מקומי, המלצות, אירועים, אבדות ומציאות, עדכוני תנועה, התארגנויות שכונתיות ועזרה הדדית.\n\n"
+                f"📍 עיר: {c_name}\n"
+                f"📍 שכונה: {new_node.name}\n"
+                f"👥 קהל יעד: תושבי השכונה והסביבה"
+            )
+        elif new_node.level == "STREET":
+            c_name = city_name or "העיר"
+            neighborhood_name = ""
+            curr_p = new_node.parent
+            while curr_p:
+                if curr_p.level == "NEIGHBORHOOD":
+                    neighborhood_name = curr_p.name
+                    break
+                curr_p = curr_p.parent
+            n_part = f" | {neighborhood_name}" if neighborhood_name else ""
+            n_desc = f"📍 שכונה: {neighborhood_name}\n" if neighborhood_name else ""
+            group_title = f"🏠 Localis | {c_name}{n_part} | רחוב {new_node.name}"
+            description = (
+                f"ברוכים הבאים לקהילת רחוב {new_node.name}.\n\n"
+                f"הקבוצה מיועדת לתושבי הרחוב ומטרתה לשפר את התקשורת בין השכנים, לשתף מידע רלוונטי, לדווח על תקלות, לעזור אחד לשני ולחזק את הקהילה המקומית.\n\n"
+                f"📍 עיר: {c_name}\n"
+                f"{n_desc}"
+                f"📍 רחוב: {new_node.name}\n"
+                f"👥 קהל יעד: תושבי הרחוב"
+            )
+        elif new_node.level == "BUILDING":
+            c_name = city_name or "העיר"
+            neighborhood_name = ""
+            curr_p = new_node.parent
+            while curr_p:
+                if curr_p.level == "NEIGHBORHOOD":
+                    neighborhood_name = curr_p.name
+                    break
+                curr_p = curr_p.parent
+            n_part = f" | {neighborhood_name}" if neighborhood_name else ""
+            n_desc = f"📍 שכונה: {neighborhood_name}\n" if neighborhood_name else ""
+            group_title = f"🔒 Localis | {c_name}{n_part} | רחוב {new_node.name}"
+            description = (
+                f"ברוכים הבאים לקהילת דיירי הבניין.\n\n"
+                f"זוהי קבוצה פרטית המיועדת לדיירים המאומתים של הבניין בלבד.\n\n"
+                f"בקבוצה ניתן לדון בנושאי ועד בית, תחזוקה, חניה, אבטחה, משלוחים, התראות חשובות וכל נושא הקשור לחיי היומיום בבניין.\n\n"
+                f"📍 עיר: {c_name}\n"
+                f"{n_desc}"
+                f"📍 כתובת: רחוב {new_node.name}\n\n"
+                f"🔒 הכניסה לקבוצה מחייבת אימות דייר.\n"
+                f"🔒 רק דיירים מאומתים יכולים להישאר חברים בקבוצה.\n"
+                f"🔒 אימות תקופתי עשוי להתבצע לצורך שמירה על פרטיות וביטחון הדיירים.\n\n"
+                f"🤝 קהילה חזקה מתחילה מהבניין שבו אתם גרים."
+            )
+
+        coords_dict = {"latitude": new_node.latitude, "longitude": new_node.longitude, "radius": new_node.radius}
+
+        # Create Groups
+        gtype = "PRIVATE" if new_node.level == "BUILDING" else "PUBLIC"
+
+        # For the target request, if custom group credentials were provided, use them
+        if r.id == req.id and custom_group_chat_id and custom_group_invite_link:
+            tg_chat_id = custom_group_chat_id
+            tg_invite_link = custom_group_invite_link
+        else:
+            tg_info = await create_telegram_group(
+                new_node.name,
+                new_node.level,
+                node_id=new_node.id,
+                group_title=group_title,
+                description=description,
+                coords=coords_dict,
+                country_name=country_name
+            )
+            tg_chat_id = tg_info["chat_id"]
+            tg_invite_link = tg_info["invite_link"]
+
+        # Check if group already exists
+        existing_tg = db.query(models.GroupChat).filter(
+            models.GroupChat.location_id == new_node.id,
+            models.GroupChat.platform == "TELEGRAM"
+        ).first()
+        if existing_tg:
+            existing_tg.chat_id = tg_chat_id
+            existing_tg.invite_link = tg_invite_link
+            existing_tg.type = gtype
+        else:
+            tg_group = models.GroupChat(
+                location_id=new_node.id,
+                platform="TELEGRAM",
+                chat_id=tg_chat_id,
+                type=gtype,
+                invite_link=tg_invite_link
+            )
+            db.add(tg_group)
+
+        # WhatsApp Mock Group
+        wa_chat_id = f"wa_chat_{new_node.name.lower().replace(' ', '_')}"
+        existing_wa = db.query(models.GroupChat).filter(
+            models.GroupChat.location_id == new_node.id,
+            models.GroupChat.platform == "WHATSAPP"
+        ).first()
+        if existing_wa:
+            existing_wa.chat_id = wa_chat_id
+            existing_wa.invite_link = f"https://chat.whatsapp.com/{wa_chat_id}"
+            existing_wa.type = gtype
+        else:
+            wa_group = models.GroupChat(
+                location_id=new_node.id,
+                platform="WHATSAPP",
+                chat_id=wa_chat_id,
+                type=gtype,
+                invite_link=f"https://chat.whatsapp.com/{wa_chat_id}"
+            )
+            db.add(wa_group)
+        db.commit()
+
+        # Notify user
+        if r.user.telegram_id:
+            msg = (
+                f"🎉 *Good news!*\nYour request to create the community *{r.name}* ({r.level.title()}) has been approved!\n\n"
+                f"You can join the new group here:\n"
+                f"👉 [Telegram Chat]({tg_invite_link})\n"
+                f"👉 [WhatsApp Chat](https://chat.whatsapp.com/{wa_chat_id})"
+            )
+            await send_message(r.user.telegram_id, msg)
+
+        # Notify admins of the status update for this node
+        await notify_admins_request_update(db, r, action_by, r.status)
+
+    if telegram_chat_id and telegram_message_id:
+        final_text = "✅ *Hierarchy Approval Completed!*\n\n"
+        for item in pending_chain:
+            final_text += f"🟢 {item.name} ({item.level.title()}) - Success\n"
+        from backend.services.bot_telegram import edit_message
+        keyboard = [[{"text": "⬅️ Back to Requests", "callback_data": "admin_req_list"}]]
+        await edit_message(telegram_chat_id, telegram_message_id, final_text, reply_markup={"inline_keyboard": keyboard})
+
+    return last_created_node

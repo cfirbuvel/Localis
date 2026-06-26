@@ -42,7 +42,7 @@ async def geocode_text(address: str) -> Optional[dict]:
         "q": address,
         "format": "json",
         "addressdetails": 1,
-        "limit": 1,
+        "limit": 5,
         "accept-language": "en"
     }
     headers = {
