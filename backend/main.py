@@ -25,6 +25,16 @@ async def startup_event():
     import asyncio
     from backend.scripts.retention_worker import start_retention_worker
     asyncio.create_task(start_retention_worker())
+    
+    # Ensure the 'geometry' column exists on the locations table (SQLite migration)
+    from sqlalchemy import text, inspect
+    insp = inspect(engine)
+    columns = [c["name"] for c in insp.get_columns("locations")]
+    if "geometry" not in columns:
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE locations ADD COLUMN geometry JSON"))
+            conn.commit()
+        print("[MIGRATION] Added 'geometry' column to locations table")
 
 # Configure CORS
 app.add_middleware(
@@ -242,6 +252,55 @@ def get_locations(
     if level is not None:
         query = query.filter(models.LocationNode.level == level)
     return query.all()
+
+@app.post("/api/locations/backfill-geometry")
+async def backfill_geometry(
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Fetch and store GeoJSON geometry from Nominatim for nodes missing it."""
+    import asyncio
+    from backend.services.geocoding import fetch_geometry_for_location
+    
+    # Only allow admins
+    roles = [ra.role for ra in current_user.role_assignments]
+    if "SUPER_ADMIN" not in roles:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    
+    eligible_levels = ["COUNTRY", "CITY", "NEIGHBORHOOD", "STREET"]
+    nodes = db.query(models.LocationNode).filter(
+        models.LocationNode.level.in_(eligible_levels),
+        models.LocationNode.geometry.is_(None)
+    ).all()
+    
+    updated = 0
+    errors = []
+    for node in nodes:
+        # Build parent chain for search context
+        parent_names = []
+        curr = node.parent
+        while curr:
+            if curr.level != "DISTRICT":
+                parent_names.append(curr.name)
+            curr = curr.parent
+        
+        try:
+            geojson = await fetch_geometry_for_location(node.name, node.level, parent_names)
+            if geojson:
+                node.geometry = geojson
+                db.commit()
+                updated += 1
+        except Exception as e:
+            errors.append(f"{node.name}: {str(e)}")
+        
+        # Rate limit: 1 req/sec for Nominatim
+        await asyncio.sleep(1.2)
+    
+    return {
+        "success": True,
+        "message": f"Backfilled geometry for {updated}/{len(nodes)} nodes.",
+        "errors": errors
+    }
 
 @app.post("/api/locations", response_model=schemas.LocationResponse)
 def create_location(

@@ -42,6 +42,8 @@ async def geocode_text(address: str) -> Optional[dict]:
         "q": address,
         "format": "json",
         "addressdetails": 1,
+        "polygon_geojson": 1,
+        "polygon_threshold": 0.0005,
         "limit": 5,
         "accept-language": "en"
     }
@@ -57,9 +59,50 @@ async def geocode_text(address: str) -> Optional[dict]:
                     res_dict = parse_nominatim_address(data[0].get("address", {}), query=address)
                     res_dict["latitude"] = float(data[0].get("lat")) if data[0].get("lat") else None
                     res_dict["longitude"] = float(data[0].get("lon")) if data[0].get("lon") else None
+                    # Include GeoJSON geometry if available (Polygon for cities, LineString for streets)
+                    geojson = data[0].get("geojson")
+                    if geojson and geojson.get("type") in ("Polygon", "MultiPolygon", "LineString"):
+                        res_dict["geometry"] = geojson
                     return res_dict
     except Exception as e:
         logger.error(f"Error geocoding text address '{address}': {e}")
+    return None
+
+
+async def fetch_geometry_for_location(name: str, level: str, parent_names: list = None) -> Optional[dict]:
+    """
+    Fetches GeoJSON boundary geometry from Nominatim for a location node.
+    Returns the GeoJSON dict (Polygon/LineString) or None.
+    """
+    # Build search query with context
+    parts = [name]
+    if parent_names:
+        parts.extend(parent_names)
+    query = ", ".join(parts)
+    
+    url = "https://nominatim.openstreetmap.org/search"
+    params = {
+        "q": query,
+        "format": "json",
+        "polygon_geojson": 1,
+        "polygon_threshold": 0.0005,
+        "limit": 1,
+        "accept-language": "en"
+    }
+    headers = {
+        "User-Agent": "Localis-Community-Bot/1.0 (localis-dev-contact@localis.org)"
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            res = await client.get(url, params=params, headers=headers, timeout=10.0)
+            if res.status_code == 200:
+                data = res.json()
+                if data:
+                    geojson = data[0].get("geojson")
+                    if geojson and geojson.get("type") in ("Polygon", "MultiPolygon", "LineString"):
+                        return geojson
+    except Exception as e:
+        logger.error(f"Error fetching geometry for '{query}': {e}")
     return None
 
 async def reverse_geocode(lat: float, lon: float) -> Optional[dict]:

@@ -111,6 +111,7 @@ class LocationResponse(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     radius: Optional[float] = None
+    geometry: Optional[dict] = None
     verified_users_count: int = 0
 
     class Config:

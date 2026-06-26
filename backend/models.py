@@ -61,6 +61,7 @@ class LocationNode(Base):
     latitude = Column(Float, nullable=True)
     longitude = Column(Float, nullable=True)
     radius = Column(Float, nullable=True)
+    geometry = Column(JSON, nullable=True)  # GeoJSON geometry (Polygon for cities, LineString for streets)
  
     # Relationships
     parent = relationship("LocationNode", remote_side=[id], backref="children")

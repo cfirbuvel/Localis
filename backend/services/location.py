@@ -216,6 +216,10 @@ async def geocode_node_coordinates_live(db: Session, node: LocationNode) -> tupl
     try:
         res = await geocode_text(address)
         if res and res.get("latitude") is not None and res.get("longitude") is not None:
+            # Store geometry if returned (Polygon for cities, LineString for streets)
+            if res.get("geometry") and node.level in ("CITY", "STREET", "NEIGHBORHOOD", "COUNTRY"):
+                node.geometry = res["geometry"]
+                db.commit()
             return res["latitude"], res["longitude"]
     except Exception as e:
         print(f"Error geocoding node {node.name}: {e}")
